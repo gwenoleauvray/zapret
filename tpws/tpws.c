@@ -567,14 +567,14 @@ bool set_ulimit()
 		DBGPRINT("set_ulimit : system fd limit is too low. trying to increase");
 		if (!(F=fopen("/proc/sys/fs/file-max","w")))
 		{
-			DBGPRINT("set_ulimit : could not open /proc/sys/fs/file-max for write");
+			fprintf(stderr,"set_ulimit : could not open /proc/sys/fs/file-max for write\n");
 			return false;
 		}
 		n=fprintf(F,"%d",fdmin_system);
 		fclose(F);
 		if (!n)
 		{
-			DBGPRINT("set_ulimit : could not write to /proc/sys/fs/file-max");
+			fprintf(stderr,"set_ulimit : could not write to /proc/sys/fs/file-max\n");
 			return false;
 		}
 	}
