@@ -721,6 +721,12 @@ Cкрипт из /etc/hotplug.d/iface запустит недостающие с
  uci set firewall.@include[-1].path="/etc/firewall.zapret"
  uci set firewall.@include[-1].reload="1"
  uci commit firewall
+Проверить не включен ли flow offload :
+ uci show firewall.@defaults[0]
+Если flow_offloading=1 или flow_offloading_hw=1 ,
+ uci set firewall.@defaults[0].flow_offloading=0
+ uci set firewall.@defaults[0].flow_offloading_hw=0
+ uci commit firewall
 Перезапустить фаервол :
  fw3 restart
 

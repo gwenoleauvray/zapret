@@ -718,7 +718,7 @@ deoffload_openwrt_firewall()
 		echo flow offloading detected ! its incompatible with zapret. disabling
 		uci set firewall.@defaults[0].flow_offloading=0
 		uci set firewall.@defaults[0].flow_offloading_hw=0
-		uci commit
+		uci commit firewall
 	else
 		echo not enabled. good
 	fi
