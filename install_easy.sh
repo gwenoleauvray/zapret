@@ -708,6 +708,22 @@ install_openwrt_iface_hook()
 	ln -fs "$OPENWRT_IFACE_HOOK" /etc/hotplug.d/iface
 }
 
+deoffload_openwrt_firewall()
+{
+	echo \* checking flow offloading
+
+	local fo=$(uci -q get firewall.@defaults[0].flow_offloading)
+	local fo_hw=$(uci -q get firewall.@defaults[0].flow_offloading_hw)
+	if [ "$fo" = "1" ] || [ "$fo_hw" = "1" ] ; then
+		echo flow offloading detected ! its incompatible with zapret. disabling
+		uci set firewall.@defaults[0].flow_offloading=0
+		uci set firewall.@defaults[0].flow_offloading_hw=0
+		uci commit
+	else
+		echo not enabled. good
+	fi
+}
+
 install_sysv_init()
 {
 	# $1 - "0"=disable
@@ -756,6 +772,7 @@ install_openwrt()
 	service_start_sysv
 	install_openwrt_iface_hook
 	install_openwrt_firewall
+	deoffload_openwrt_firewall
 	restart_openwrt_firewall
 }
 
