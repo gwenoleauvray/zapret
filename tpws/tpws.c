@@ -581,7 +581,7 @@ bool set_ulimit()
 
 	struct rlimit rlim = {fdmax,fdmax};
 	n=setrlimit(RLIMIT_NOFILE, &rlim);
-	if (n<0) perror("setrlimit");
+	if (n==-1) perror("setrlimit");
 	return n!=-1;
 }
 
@@ -747,8 +747,7 @@ int main(int argc, char *argv[]) {
 		goto exiterr;
 	}
 
-	if (!set_ulimit())
-		perror("set_ulimit: ");
+	set_ulimit();
 
 	if (!droproot())
 	{
