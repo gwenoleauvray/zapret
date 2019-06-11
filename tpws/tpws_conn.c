@@ -861,6 +861,8 @@ int event_loop(int listen_fd)
 		{
 			if (events[i].data.ptr == NULL)
 			{
+				DBGPRINT("\nEVENT mask %08X conn=NULL (accept)",events[i].events);
+
 				//Accept new connection
 				tmp_fd = accept4(listen_fd, NULL, 0, SOCK_NONBLOCK);
 				if (tmp_fd < 0)

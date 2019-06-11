@@ -23,6 +23,7 @@
 #include <signal.h>
 #include <sys/capability.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
 
 #include "tpws.h"
 #include "tpws_conn.h"
@@ -272,7 +273,7 @@ void parse_params(int argc, char *argv[])
 			break;
 		case 13: /* maxconn */
 			params.maxconn = atoi(optarg);
-			if (params.maxconn <= 0)
+			if (params.maxconn <= 0 || params.maxconn > 10000)
 			{
 				fprintf(stderr, "bad maxconn\n");
 				exit_clean(1);
@@ -542,6 +543,48 @@ bool find_listen_addr(struct sockaddr_storage *salisten, bool bindll, int *if_in
 	return found;
 }
 
+bool set_ulimit()
+{
+	FILE *F;
+	int n,cur_lim=0;
+	// 4 fds per tamper connection (2 pipe + 2 socket), 6 fds for tcp proxy connection (4 pipe + 2 socket)
+	// additional 1/3 for unpaired remote legs sending buffers
+	// 16 for listen_fd, epoll, hostlist, ...
+	int fdmax = (params.tamper ? 4 : 6) * params.maxconn;
+	fdmax += fdmax/3 + 16;
+	int fdmin_system = fdmax + 4096;
+
+	DBGPRINT("set_ulimit : fdmax=%d fdmin_system=%d",fdmax,fdmin_system);
+
+	if (!(F=fopen("/proc/sys/fs/file-max","r")))
+		return false;
+	n=fscanf(F,"%d",&cur_lim);
+	fclose(F);
+	if (!n)	return false;
+	DBGPRINT("set_ulimit : current system file-max=%d",cur_lim);
+	if (cur_lim<fdmin_system)
+	{
+		DBGPRINT("set_ulimit : system fd limit is too low. trying to increase");
+		if (!(F=fopen("/proc/sys/fs/file-max","w")))
+		{
+			DBGPRINT("set_ulimit : could not open /proc/sys/fs/file-max for write");
+			return false;
+		}
+		n=fprintf(F,"%d",fdmin_system);
+		fclose(F);
+		if (!n)
+		{
+			DBGPRINT("set_ulimit : could not write to /proc/sys/fs/file-max");
+			return false;
+		}
+	}
+
+	struct rlimit rlim = {fdmax,fdmax};
+	n=setrlimit(RLIMIT_NOFILE, &rlim);
+	if (n<0) perror("setrlimit");
+	return n!=-1;
+}
+
 
 int main(int argc, char *argv[]) {
 	int listen_fd = -1;
@@ -703,6 +746,9 @@ int main(int argc, char *argv[]) {
 		perror("bind: ");
 		goto exiterr;
 	}
+
+	if (!set_ulimit())
+		perror("set_ulimit: ");
 
 	if (!droproot())
 	{
