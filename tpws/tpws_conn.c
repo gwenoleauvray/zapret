@@ -559,7 +559,7 @@ bool epoll_set_flow_pair(tproxy_conn_t *conn)
 		return false;
 	if (conn_partner_alive(conn))
 	{
-		if (!epoll_set_flow(conn->partner, !bHasUnsent && (conn->partner->state!=CONN_RDHUP), conn->partner->bFlowOut = bHasUnsentPartner || conn->partner->state==CONN_RDHUP))
+		if (!epoll_set_flow(conn->partner, !bHasUnsent && (conn->partner->state!=CONN_RDHUP), bHasUnsentPartner || conn->partner->state==CONN_RDHUP))
 			return false;
 	}
 	return true;
