@@ -706,7 +706,9 @@ bool handle_epoll(tproxy_conn_t *conn, uint32_t evt)
 	
 	DBGPRINT("-handle_epoll rd=%zd wr=%zd",rd,wr);
 
-	return rd != -1 && wr != -1;
+	// do not fail if partner fails.
+	// if partner fails there will be another epoll event with EPOLLHUP or EPOLLERR
+	return rd != -1;
 }
 
 bool remove_closed_connections(int efd, struct tailhead *close_list)
