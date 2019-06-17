@@ -712,16 +712,30 @@ deoffload_openwrt_firewall()
 {
 	echo \* checking flow offloading
 
+	local mod=0
 	local fo=$(uci -q get firewall.@defaults[0].flow_offloading)
 	local fo_hw=$(uci -q get firewall.@defaults[0].flow_offloading_hw)
-	if [ "$fo" = "1" ] || [ "$fo_hw" = "1" ] ; then
-		echo flow offloading detected ! its incompatible with zapret. disabling
-		uci set firewall.@defaults[0].flow_offloading=0
+	
+	if [ "$fo_hw" = "1" ] ; then
+		echo hardware flow offloading detected. its incompatible with zapret. disabling
 		uci set firewall.@defaults[0].flow_offloading_hw=0
-		uci commit firewall
+		mod=1
 	else
-		echo not enabled. good
+		echo hardware flow offloading disabled. ok
 	fi
+	if [ "$fo" = "1" ] ; then
+		echo -n "software flow offloading detected. "
+		if [ "${MODE%nfqws*}" != "$MODE" ]; then
+			echo its incompatible with nfqws tcp data tampering. disabling
+			uci set firewall.@defaults[0].flow_offloading=0
+			mod=1
+		else
+			echo its compatible with selected options. not disabling
+		fi
+	else
+		echo software flow offloading disabled. ok
+	fi
+	[ "$mod" = "1" ] && uci commit firewall
 }
 
 install_sysv_init()
@@ -775,6 +789,7 @@ install_openwrt()
 	deoffload_openwrt_firewall
 	restart_openwrt_firewall
 }
+
 
 
 # build binaries, do not use precompiled
