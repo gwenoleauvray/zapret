@@ -94,6 +94,8 @@ redsocks {
 
 * Завертывание соединений через iptables
 
+Будем завертывать любые tcp соединения на ip из ipset "ipban" и https на ip из ipset "zapret".
+
 --- /etc/firewall.user -----
 SOXIFIER_PORT=1099
 
@@ -105,11 +107,13 @@ network_find_wan_all wan_iface
 for ext_iface in $wan_iface; do
     network_get_device ext_device $ext_iface
     ipt OUTPUT -t nat -o $ext_device -p tcp --dport 443 -m set --match-set zapret dst -j REDIRECT --to-port $SOXIFIER_PORT
+    ipt OUTPUT -t nat -o $ext_device -p tcp -m set --match-set ipban dst -j REDIRECT --to-port $SOXIFIER_PORT
 done
 
 network_get_device DEVICE lan
 sysctl -w net.ipv4.conf.$DEVICE.route_localnet=1
 ipt prerouting_lan_rule -t nat -p tcp --dport 443 -m set --match-set zapret dst -j DNAT --to 127.0.0.1:$SOXIFIER_PORT
+ipt prerouting_lan_rule -t nat -p tcp -m set --match-set ipban dst -j DNAT --to 127.0.0.1:$SOXIFIER_PORT
 ----------------------------
 
 Внести параметр "reload" в указанное место :
