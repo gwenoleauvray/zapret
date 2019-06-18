@@ -244,8 +244,9 @@ for ext_iface in $wan_iface; do
 	ipt OUTPUT -t mangle -o $DEVICE -m set --match-set ipban dst -j MARK --set-mark 0x800/0x800
 done
 
-ipt PREROUTING -t mangle -p tcp --dport 443 -m set --match-set zapret dst -j MARK --set-mark 0x800/0x800
-ipt PREROUTING -t mangle -m set --match-set ipban dst -j MARK --set-mark 0x800/0x800
+network_get_device DEVICE lan
+ipt PREROUTING -t mangle -i $DEVICE -p tcp --dport 443 -m set --match-set zapret dst -j MARK --set-mark 0x800/0x800
+ipt PREROUTING -t mangle -i $DEVICE -m set --match-set ipban dst -j MARK --set-mark 0x800/0x800
 ------------------------------------------------
 
 # fw3 restart
@@ -312,8 +313,9 @@ for ext_iface in $wan_iface; do
 	ipt OUTPUT -t mangle -o $DEVICE -j MARK --set-mark 0x1000/0x1000
 done
 
-ipt PREROUTING -t mangle -p tcp --dport 443 -m set --match-set zapret dst -j MARK --set-mark 0x800/0x800
-ipt PREROUTING -t mangle -m set --match-set ipban dst -j MARK --set-mark 0x800/0x800
+network_get_device DEVICE lan
+ipt PREROUTING -t mangle -i $DEVICE -p tcp --dport 443 -m set --match-set zapret dst -j MARK --set-mark 0x800/0x800
+ipt PREROUTING -t mangle -i $DEVICE -m set --match-set ipban dst -j MARK --set-mark 0x800/0x800
 
 # do masquerade for OUTPUT to ensure correct outgoing address
 ipt postrouting_tunvps_rule -t nat -m mark --mark 0x1000/0x1000 -j MASQUERADE
@@ -391,8 +393,8 @@ config rule
 На linux клиенте проще всего будет выставлять dscp в iptables по номеру порта источника :
 
 --/etc/rc.local---------------------------------
-iptables -t mangle -A OUTPUT -p tcp --sport 23444 -j DSCP --set-dscp 1
-iptables -t mangle -A OUTPUT -p udp --sport 23444 -j DSCP --set-dscp 1
+iptables -A OUTPUT -t mangle -p tcp --sport 23444 -j DSCP --set-dscp 1
+iptables -A OUTPUT -t mangle -p udp --sport 23444 -j DSCP --set-dscp 1
 ------------------------------------------------
 
 можно привязываться к pid процесса, но тогда нужно перенастраивать iptables при каждом перезапуске
