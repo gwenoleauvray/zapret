@@ -39,6 +39,12 @@ zz()
 {
  gzip -c >"$1.gz"
 }
+zzsize()
+{
+ local f="$1"
+ [ -f "$1.gz" ] && f="$1.gz"
+ wc -c <"$f"
+}
 
 digger()
 {

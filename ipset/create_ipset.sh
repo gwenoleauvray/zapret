@@ -8,9 +8,9 @@ IPSET_OPT="hashsize 262144 maxelem 1048576"
 IP2NET="$EXEDIR/../ip2net/ip2net"
 
 . "$EXEDIR/def.sh"
-
 IPSET_CMD="$TMPDIR/ipset_cmd.txt"
 IPSET_SAVERAM_CHUNK_SIZE=20000
+IPSET_SAVERAM_MIN_FILESIZE=131072
 
 [ "$1" = "no-update" ] && NO_UPDATE=1
 
@@ -62,17 +62,29 @@ ipset_get_script()
 
 ipset_restore()
 {
-  # $1 - filename
-  # $2 - ipset name
-  # $3 - exclude file
-  # $4 - "6" = ipv6
-  if [ "$SAVERAM" = "1" ]; then
-   ipset_get_script "$1" "$2" "$3" "$4" >"$IPSET_CMD"
-   ipset_restore_chunked "$IPSET_CMD" $IPSET_SAVERAM_CHUNK_SIZE
-   rm -f "$IPSET_CMD"
-  else
-   ipset_get_script "$1" "$2" "$3" "$4" | ipset -! restore
-  fi
+ # $1 - filename
+ # $2 - ipset name
+ # $3 - exclude file
+ # $4 - "6" = ipv6
+ zzexist "$1" || return
+ local fsize=$(zzsize "$1")
+ local svram=0
+ # do not saveram small files. file can also be gzipped
+ [ "$SAVERAM" = "1" ] && [ "$fsize" -ge "$IPSET_SAVERAM_MIN_FILESIZE" ] && svram=1
+
+ local T="Adding to ipset $2 ($IPSTYPE"
+ [ -x "$IP2NET" ] && [ "$4" != "6" ] && T="$T, ip2net"
+ [ "$svram" = "1" ] && T="$T, saveram"
+ T="$T) : $f"
+ echo $T
+
+ if [ "$svram" = "1" ] && [ "$fsize" -ge "$IPSET_SAVERAM_MIN_FILESIZE" ]; then
+  ipset_get_script "$1" "$2" "$3" "$4" >"$IPSET_CMD"
+  ipset_restore_chunked "$IPSET_CMD" $IPSET_SAVERAM_CHUNK_SIZE
+  rm -f "$IPSET_CMD"
+ else
+  ipset_get_script "$1" "$2" "$3" "$4" | ipset -! restore
+ fi
 }
 
 create_ipset()
@@ -87,16 +99,8 @@ ipset create $2 $IPSTYPE $IPSET_OPT 2>/dev/null || {
  [ "$NO_UPDATE" = "1" ] && return
 }
 ipset flush $2
-for f in "$3" "$4"
-do
- zzexist "$f" && {
-  local T="Adding to ipset $2 ($IPSTYPE"
-  [ -x "$IP2NET" ] && T="$T, ip2net"
-  [ "$SAVERAM" = "1" ] && T="$T, saveram"
-  T="$T) : $f"
-  echo $T
-  ipset_restore "$f" "$2" "$5" 4
- }
+for f in "$3" "$4" ; do
+ ipset_restore "$f" "$2" "$5" 4
 done
 return 0
 }
@@ -108,15 +112,8 @@ ipset create $2 $IPSTYPE $IPSET_OPT family inet6 2>/dev/null || {
  [ "$NO_UPDATE" = "1" ] && return
 }
 ipset flush $2
-for f in "$3" "$4"
-do
- zzexist "$f" && {
-  local T="Adding to ipset $2 ($IPSTYPE"
-  [ "$SAVERAM" = "1" ] && T="$T, saveram"
-  T="$T) : $f"
-  echo $T
-  ipset_restore "$f" "$2" "$5" 6
- }
+for f in "$3" "$4"; do
+ ipset_restore "$f" "$2" "$5" 6
 done
 return 0
 }
@@ -126,7 +123,7 @@ return 0
 # in SAVERAM mode we feed script lines in portions starting from the end, while truncating source file to free /tmp space
 RAMSIZE=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 SAVERAM=0
-[ "$RAMSIZE" -lt "120000" ] && SAVERAM=1
+[ "$RAMSIZE" -lt "110000" ] && SAVERAM=1
 
 [ "$DISABLE_IPV4" != "1" ] && {
   create_ipset hash:ip $ZIPSET "$ZIPLIST" "$ZIPLIST_USER" "$ZIPLIST_EXCLUDE"
