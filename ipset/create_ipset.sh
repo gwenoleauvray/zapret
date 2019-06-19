@@ -78,7 +78,7 @@ ipset_restore()
  T="$T) : $f"
  echo $T
 
- if [ "$svram" = "1" ] && [ "$fsize" -ge "$IPSET_SAVERAM_MIN_FILESIZE" ]; then
+ if [ "$svram" = "1" ]; then
   ipset_get_script "$1" "$2" "$3" "$4" >"$IPSET_CMD"
   ipset_restore_chunked "$IPSET_CMD" $IPSET_SAVERAM_CHUNK_SIZE
   rm -f "$IPSET_CMD"
