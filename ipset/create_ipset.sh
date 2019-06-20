@@ -39,14 +39,22 @@ ipset_restore_chunked()
 }
 
 
+sortu()
+{
+ sort -u
+}
+ip2net()
+{
+ "$IP2NET"
+}
 ipset_get_script()
 {
  # $1 - filename
  # $2 - ipset name
  # $3 - exclude file
  # $4 - "6" = ipv6
- local filter="sort -u"
- [ -x "$IP2NET" ] && [ "$4" != "6" ] && filter="$IP2NET"  
+ local filter=sortu
+ [ -x "$IP2NET" ] && [ "$4" != "6" ] && filter=ip2net
  if [ -f "$3" ] ; then
   zzcat "$1" | grep -vxFf "$3" | $filter | sed -nre "s/^.+$/add $2 &/p"
  else
