@@ -45,18 +45,12 @@ ipset_get_script()
  # $2 - ipset name
  # $3 - exclude file
  # $4 - "6" = ipv6
- if [ -x "$IP2NET" ] && [ "$4" != "6" ]; then
-  if [ -f "$3" ] ; then
-   zzcat "$1" | grep -vxFf "$3" | "$IP2NET" | sed -nre "s/^.+$/add $2 &/p"
-  else
-   zzcat "$1" | "$IP2NET" | sed -nre "s/^.+$/add $2 &/p"
-  fi
+ local filter="sort -u"
+ [ -x "$IP2NET" ] && [ "$4" != "6" ] && filter="$IP2NET"  
+ if [ -f "$3" ] ; then
+  zzcat "$1" | grep -vxFf "$3" | $filter | sed -nre "s/^.+$/add $2 &/p"
  else
-  if [ -f "$3" ] ; then
-   zzcat "$1" | grep -vxFf "$3" | sort -u | sed -nre "s/^.+$/add $2 &/p"
-  else
-   zzcat "$1" | sort -u | sed -nre "s/^.+$/add $2 &/p"
-  fi
+  zzcat "$1" | $filter | sed -nre "s/^.+$/add $2 &/p"
  fi
 }
 
