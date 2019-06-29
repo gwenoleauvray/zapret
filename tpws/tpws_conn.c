@@ -34,7 +34,11 @@ bool send_buffer_create(send_buffer_t *sb, char *data, size_t len)
 		exit(1);
 	}
 	sb->data = malloc(len);
-	if (!sb->data) return false;
+	if (!sb->data)
+	{
+		DBGPRINT("send_buffer_create failed. errno=%d",errno);
+		return false;
+	}
 	if (data) memcpy(sb->data,data,len);
 	sb->len = len;
 	sb->pos = 0;
@@ -633,6 +637,8 @@ bool handle_epoll(tproxy_conn_t *conn, uint32_t evt)
 	// do not receive new until old is sent
 	if (conn_has_unsent(conn->partner))
 		return true;
+		
+	bool oom=false;
 
 	numbytes=conn_bytes_unread(conn);
 	DBGPRINT("numbytes=%d",numbytes);
@@ -697,6 +703,7 @@ bool handle_epoll(tproxy_conn_t *conn, uint32_t evt)
 					DBGPRINT("send_or_buffer(3) fd=%d wr=%zd err=%d",conn->partner->fd,wr,errno);
 					if (wr>0) conn->partner->twr += wr;
 				}
+				if (wr<0 && errno==ENOMEM) oom=true;
 			}
 		}
 
@@ -705,10 +712,11 @@ bool handle_epoll(tproxy_conn_t *conn, uint32_t evt)
 	}
 	
 	DBGPRINT("-handle_epoll rd=%zd wr=%zd",rd,wr);
+	if (oom) DBGPRINT("handle_epoll: OUT_OF_MEMORY");
 
 	// do not fail if partner fails.
 	// if partner fails there will be another epoll event with EPOLLHUP or EPOLLERR
-	return rd != -1;
+	return rd>=0 && !oom;
 }
 
 bool remove_closed_connections(int efd, struct tailhead *close_list)
