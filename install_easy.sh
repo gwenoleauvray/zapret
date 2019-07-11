@@ -612,6 +612,10 @@ check_prerequisites_openwrt()
 				UPD=1
 			}
 			opkg install grep
+
+			# someone reported device partially fail if /bin/grep is absent
+			# grep package deletes /bin/grep
+			[ -f /bin/grep ] || ln -s busybox /bin/grep
 		fi
 	}
 }
