@@ -16,7 +16,7 @@ ZIPLIST_IPBAN_TMP="$TMPDIR/zapret-ipban.txt"
 getuser
 
 # assume all https banned by ip
-curl -k --fail --max-time 150 --connect-timeout 5 --retry 3 --max-filesize 62914560 "$ZURL_REESTR" -o "$ZREESTR" ||
+curl -k --fail --max-time 150 --connect-timeout 5 --retry 3 --max-filesize 125829120 "$ZURL_REESTR" -o "$ZREESTR" ||
 {
  echo reestr list download failed
  exit 2
@@ -35,7 +35,7 @@ fi
  
 rm -f "$ZREESTR"
 
-curl --fail --max-time 150 --connect-timeout 5 --max-filesize 20971520 -k -L "$ZURL_AZ" | cut_local >"$ZAZ" ||
+curl --fail --max-time 150 --connect-timeout 5 --max-filesize 41943040 -k -L "$ZURL_AZ" | cut_local >"$ZAZ" ||
 {
  rm -f "$ZIPLIST_IPBAN_TMP"
  echo antizapret list download failed
