@@ -17,7 +17,7 @@ getuser
 # both disabled
 [ "$DISABLE_IPV4" = "1" ] && [ "$DISABLE_IPV6" = "1" ] && exit 0
 
-curl -k --fail --max-time 150 --connect-timeout 5 --retry 3 --max-filesize 62914560 "$ZURL" >"$ZREESTR" ||
+curl -k --fail --max-time 150 --connect-timeout 5 --retry 3 --max-filesize 125829120 "$ZURL" >"$ZREESTR" ||
 {
  echo reestr list download failed   
  exit 2

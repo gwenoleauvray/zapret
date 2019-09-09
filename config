@@ -1,6 +1,9 @@
 # this file is included from init scripts
 # change values here
 
+# can help in case /tmp has not enough space
+#TMPDIR=/opt/zapret/tmp
+
 # CHOOSE OPERATION MODE
 # use nfqws : nfqws_ipset nfqws_ipset_https nfqws_all nfqws_all_https
 # use tpws : tpws_ipset tpws_ipset_https tpws_all tpws_all_https tpws_hostlist
@@ -16,10 +19,9 @@ TPWS_OPT_HTTP="--hostspell=HOST --split-http-req=method"
 TPWS_OPT_HTTPS="--split-pos=3"
 
 # for routers based on desktop linux only. has not effect in openwrt.
-# CHOOSE LAN and WAN NETWORK INTERFACES
-# or leave them commented if its not router
-#IFACE_LAN=eth0
-#IFACE_WAN=eth1
+# CHOSE NETWORK INTERFACE BEHIND NAT (LAN)
+# or leave it commented if its not router
+#SLAVE_ETH=eth0
 
 # should init scripts apply firewall rules ?
 # set to 0 if firewall control system is present
@@ -30,9 +32,6 @@ INIT_APPLY_FW=1
 #DISABLE_IPV4=1
 # do not work with ipv6
 DISABLE_IPV6=1
-
-# thread number for multithread dns resolver (1-100)
-MDIG_THREADS=30
 
 # select which init script will be used to get ip or host list
 # possible values : get_user.sh get_antizapret.sh get_combined.sh get_reestr.sh get_hostlist.sh

@@ -1,6 +1,6 @@
 . "$EXEDIR/../config"
 
-TMPDIR=/tmp
+[ -z "$TMPDIR" ] && TMPDIR=/tmp
 ZIPSET=zapret
 ZIPSET6=zapret6
 ZIPLIST="$EXEDIR/zapret-ip.txt"
