@@ -298,6 +298,7 @@ ask_config_desktop()
 copy_all()
 {
 	cp -R "$1" "$2"
+	[ -d "$2/tmp" ] || mkdir "$2/tmp"
 }
 copy_minimal()
 {
