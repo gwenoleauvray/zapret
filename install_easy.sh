@@ -306,7 +306,7 @@ copy_minimal()
 	
 	[ -d "$2" ] || mkdir -p "$2"
 	
-	mkdir "$2/tpws" "$2/nfq" "$2/ip2net" "$2/mdig" "$2/binaries" "$2/binaries/$ARCH"
+	mkdir "$2/tpws" "$2/nfq" "$2/ip2net" "$2/mdig" "$2/binaries" "$2/binaries/$ARCH" "$2/tmp"
 	cp -R "$1/ipset" "$2"
 	cp -R "$1/init.d" "$2"
 	cp "$1/config" "$1/install_easy.sh" "$1/uninstall_easy.sh" "$1/install_bin.sh" "$2"
