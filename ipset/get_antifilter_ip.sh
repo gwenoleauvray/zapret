@@ -7,10 +7,12 @@ EXEDIR=$(dirname "$SCRIPT")
 . "$EXEDIR/def.sh"
 
 #ZURL=https://github.com/zapret-info/z-i/raw/master/dump.csv
-ZURL=http://antizapret.prostovpn.org/iplist.txt
+ZURL=https://antifilter.network/download/ip.lst
 ZIPLISTTMP="$TMPDIR/zapret-ip.txt"
 
 getuser
+
+[ "$DISABLE_IPV4" != "1" ] && {
 
 curl --fail --max-time 150 --connect-timeout 5 --max-filesize 41943040 -k -L "$ZURL" | cut_local >"$ZIPLISTTMP" &&
 {
@@ -21,5 +23,8 @@ curl --fail --max-time 150 --connect-timeout 5 --max-filesize 41943040 -k -L "$Z
  fi
  cat "$ZIPLISTTMP" | zz "$ZIPLIST"
  rm -f "$ZIPLISTTMP" "$ZIPLIST"
- "$EXEDIR/create_ipset.sh"
 }
+
+}
+
+ "$EXEDIR/create_ipset.sh"

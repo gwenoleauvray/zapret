@@ -228,11 +228,11 @@ select_getlist()
 		if ask_yes_no Y "do you want to auto download ip/host list"; then
 			if [ "${MODE%hostlist*}" != "$MODE" ] ; then
 				local GL_OLD=$GETLIST
-				GETLIST="get_hostlist.sh"
+				GETLIST="get_reestr_hostlist.sh"
 				[ "$GL_OLD" != "$GET_LIST" ] && write_config_var GETLIST
 			else
-				GETLISTS="get_user.sh get_antizapret.sh get_combined.sh get_reestr.sh"
-				GETLIST_DEF="get_antizapret.sh"
+				GETLISTS="get_user.sh get_antifilter_ip.sh get_antifilter_ipsum.sh get_reestr_ip.sh get_reestr_combined.sh get_reestr_resolve.sh"
+				GETLIST_DEF="get_antifilter_ipsum.sh"
 				ask_list GETLIST "$GETLISTS" "$GETLIST_DEF" && write_config_var GETLIST
 			fi
 			return

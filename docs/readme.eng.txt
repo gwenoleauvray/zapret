@@ -194,13 +194,11 @@ Ways to get a list of blocked IP
 1) Enter the blocked domains to ipset/zapret-hosts-user.txt and run ipset/get_user.sh
 At the output, you get ipset/zapret-ip-user.txt with IP addresses.
 
-2) ipset/get_reestr.sh. Russian specific
+2) ipset/get_reestr_*.sh. Russian specific
 
-3) ipset/get_anizapret.sh. Russian specific
+3) ipset/get_antifilter_*.sh. Russian specific
 
-4) ipset/get_combined.sh.  Russian specific
-
-5) ipset/get_config.sh. This script calls what is written into the GETLIST variable from the config file.
+4) ipset/get_config.sh. This script calls what is written into the GETLIST variable from the config file.
 If the variable is not defined, then no action is taken.
 
 So, if you're not russian, the only way for you is to manually add blocked domains.
