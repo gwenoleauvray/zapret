@@ -21,13 +21,15 @@ dig_reestr()
  local DOMMASK='^.*;[^ ;:/]+\.[^ ;:/]+;'
  local TMP="$TMPDIR/tmp.txt"
  # find entries with https or without domain name - they should be banned by IP
+ # 2971-18 is TELEGRAM. lots of proxy IPs banned, list grows very large
  (grep -avE "$DOMMASK" "$ZREESTR" ; grep -a "https://" "$ZREESTR") |
+  grep -av "2971-18" |
   grep -oE "$1" | cut_local | sort -u >$TMP
 
  cat "$TMP" | zz "$3"
 
  # other IPs go to regular zapret list
- grep -oE "$1" "$ZREESTR" | cut_local | grep -xvFf "$TMP" | sort -u | zz "$2"
+ grep -av "2971-18" "$ZREESTR" | grep -oE "$1" | cut_local | grep -xvFf "$TMP" | sort -u | zz "$2"
 
  rm -f "$TMP"
 }

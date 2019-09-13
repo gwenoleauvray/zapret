@@ -231,8 +231,8 @@ select_getlist()
 				GETLIST="get_reestr_hostlist.sh"
 				[ "$GL_OLD" != "$GET_LIST" ] && write_config_var GETLIST
 			else
-				GETLISTS="get_user.sh get_antifilter_ip.sh get_antifilter_ipsum.sh get_reestr_ip.sh get_reestr_combined.sh get_reestr_resolve.sh"
-				GETLIST_DEF="get_antifilter_ipsum.sh"
+				GETLISTS="get_user.sh get_antifilter_ip.sh get_antifilter_ipsmart.sh get_antifilter_ipsum.sh get_reestr_ip.sh get_reestr_combined.sh get_reestr_resolve.sh"
+				GETLIST_DEF="get_antifilter_ipsmart.sh"
 				ask_list GETLIST "$GETLISTS" "$GETLIST_DEF" && write_config_var GETLIST
 			fi
 			return

@@ -17,8 +17,8 @@ dig_reestr()
  # $1 - grep ipmask
  # $2 - iplist
 
- # other IPs go to regular zapret list
- grep -oE "$1" "$ZREESTR" | cut_local | sort -u | zz "$2"
+ # 2971-18 is TELEGRAM. lots of proxy IPs banned, list grows very large
+ grep -av "2971-18" "$ZREESTR" | grep -oE "$1" | cut_local | sort -u | zz "$2"
 }
 
 

@@ -9,6 +9,6 @@ getuser
 
 . "$EXEDIR/antifilter.helper"
 
-get_antifilter https://antifilter.network/download/ipsum.lst "$ZIPLIST"
+get_antifilter https://antifilter.network/download/ipsmart.lst "$ZIPLIST"
 
 "$EXEDIR/create_ipset.sh"
