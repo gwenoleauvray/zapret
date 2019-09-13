@@ -4,6 +4,11 @@
 # can help in case /tmp has not enough space
 #TMPDIR=/opt/zapret/tmp
 
+# options for ipsets
+# too low hashsize can cause memory allocation errors on low RAM systems , even if RAM is enough
+# too large hashsize will waste lots of RAM
+IPSET_OPT="hashsize 262144 maxelem 2097152"
+
 # CHOOSE OPERATION MODE
 # use nfqws : nfqws_ipset nfqws_ipset_https nfqws_all nfqws_all_https
 # use tpws : tpws_ipset tpws_ipset_https tpws_all tpws_all_https tpws_hostlist

@@ -4,7 +4,7 @@
 
 SCRIPT=$(readlink -f "$0")
 EXEDIR=$(dirname "$SCRIPT")
-IPSET_OPT="hashsize 262144 maxelem 2097152"
+[ -z "$IPSET_OPT" ] && IPSET_OPT="hashsize 262144 maxelem 2097152"
 IP2NET="$EXEDIR/../ip2net/ip2net"
 
 . "$EXEDIR/def.sh"
