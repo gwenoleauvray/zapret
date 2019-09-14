@@ -266,8 +266,7 @@ int main(int argc, char **argv)
 				for (p = pos + 1, ip_ct = 1; p < ipct; p++, ip_ct++)
 				{
 					ip6_and(iplist + p, &mask, &ip);
-					inet_ntop(AF_INET6, &ip_start, str, sizeof(str));
-					if (cmp6(&ip_start, &ip, NULL))
+					if (memcmp(&ip_start, &ip, sizeof(ip)))
 						break;
 				}
 				if (ip_ct >= params.v6_threshold)
