@@ -9,6 +9,10 @@
 # too large hashsize will waste lots of RAM
 IPSET_OPT="hashsize 262144 maxelem 2097152"
 
+# options for ip2net. "-4" or "-6" auto added by ipset create script
+IP2NET_OPT4="--prefix-length=22-31 --v4-threshold=3/4"
+IP2NET_OPT6="--prefix-length=56-64 --v6-threshold=5"
+
 # CHOOSE OPERATION MODE
 # use nfqws : nfqws_ipset nfqws_ipset_https nfqws_all nfqws_all_https
 # use tpws : tpws_ipset tpws_ipset_https tpws_all tpws_all_https tpws_hostlist
