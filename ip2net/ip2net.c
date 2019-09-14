@@ -29,7 +29,6 @@
 
 int ucmp(const void * a, const void * b, void *arg)
 {
-
 	if (*(uint32_t*)a < *(uint32_t*)b)
 		return -1;
 	else if (*(uint32_t*)a > *(uint32_t*)b)
@@ -259,7 +258,7 @@ int main(int argc, char **argv)
 
 			ip_ct_max_ip = iplist[pos];
 			pos_end = pos + 1;
-			// find largest possible network with maximum ip coverage with no less than ip6_subnet_threshold addresses
+			// find smallest network with maximum ip coverage with no less than ip6_subnet_threshold addresses
 			for (zct = params.zct_min; zct <= params.zct_max; zct++)
 			{
 				mask_from_bitcount6(zct, &mask);
