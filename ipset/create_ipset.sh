@@ -58,10 +58,7 @@ ipset_get_script()
  # $3 - exclude file
  # $4 - "6" = ipv6
  local filter=sortu
- [ -x "$IP2NET" ] && {
-  filter=ip2net4
-  [ "$4" = "6" ] && filter=ip2net6
- }
+ [ -x "$IP2NET" ] && filter=ip2net$4
  if [ -f "$3" ] ; then
   zzcat "$1" | grep -vxFf "$3" | $filter | sed -nre "s/^.+$/add $2 &/p"
  else
