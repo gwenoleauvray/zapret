@@ -462,7 +462,7 @@ IPSET_OPT="hashsize 262144 maxelem 2097152"
 Задавать слишком большой hashsize для недостаточно больших списков нецелесообразно.
 
 Опции для вызова ip2net. Отдельно для листов ipv4 и ipv6.
-IP2NET_OPT4="--prefix-length=22-31 --v4-threshold=3/4"
+IP2NET_OPT4="--prefix-length=22-30 --v4-threshold=3/4"
 IP2NET_OPT6="--prefix-length=56-64 --v6-threshold=5"
 
 Следующие настройки не актуальны для openwrt :
