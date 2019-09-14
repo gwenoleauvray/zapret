@@ -1,128 +1,369 @@
-// group ipv4 list from stdout into subnets
-// each line must contain either ipv4 or ipv4/bitcount
-// valid ipv4/bitcount are passed through without modification
-// ipv4 are groupped into subnets
+// group ipv4/ipv6 list from stdout into subnets
+// each line must contain either ip or ip/bitcount
+// valid ip/bitcount are passed through without modification
+// ip are groupped into subnets
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+#include <linux/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <getopt.h>
 #include "qsort.h"
 
 #define ALLOC_STEP 16384
 
 // minimum subnet fill percent is  PCTMULT/PCTDIV  (for example 3/4)
-#define PCTMULT	3
-#define PCTDIV	4
+#define DEFAULT_PCTMULT	3
+#define DEFAULT_PCTDIV	4
 // subnet search range in "zero bit count"
 // means search start from /(32-ZCT_MAX) to /(32-ZCT_MIN)
-#define ZCT_MAX 10
-#define ZCT_MIN 2
+#define DEFAULT_V4_ZCT_MAX 10 //   /22
+#define DEFAULT_V4_ZCT_MIN 2  //   /30
+#define DEFAULT_V6_ZCT_MAX 72 //   /56
+#define DEFAULT_V6_ZCT_MIN 64 //   /64
+// must be no less than N ipv6 in subnet
+#define DEFAULT_V6_THRESHOLD	5
 
-typedef unsigned int uint;
-typedef unsigned char uchar;
-
-int ucmp (const void * a,const void * b, void *arg)
+int ucmp(const void * a, const void * b, void *arg)
 {
-   if (*(uint*)a < *(uint*)b)
-    return -1;
-   else if (*(uint*)a > *(uint*)b)
-    return 1;
-   else
-    return 0;
-}
 
-uint mask_from_bitcount(uint zct)
+	if (*(uint32_t*)a < *(uint32_t*)b)
+		return -1;
+	else if (*(uint32_t*)a > *(uint32_t*)b)
+		return 1;
+	else
+		return 0;
+}
+uint32_t mask_from_bitcount(uint32_t zct)
 {
- return ~((1<<zct)-1);
+	return ~((1 << zct) - 1);
 }
-
 // make presorted array unique. return number of unique items.
 // 1,1,2,3,3,0,0,0 (ct=8) => 1,2,3,0 (ct=4)
-uint unique(uint *pu,uint ct)
+uint32_t unique(uint32_t *pu, uint32_t ct)
 {
- uint i,j,u;
- for(i=j=0 ; j<ct ; i++)
- {
-  u = pu[j++];
-  for(; j<ct && pu[j]==u ; j++);
-  pu[i] = u;
- }
- return i;
+	uint32_t i, j, u;
+	for (i = j = 0; j < ct; i++)
+	{
+		u = pu[j++];
+		for (; j < ct && pu[j] == u; j++);
+		pu[i] = u;
+	}
+	return i;
 }
 
-int main()
+
+
+int cmp6(const void * a, const void * b, void *arg)
 {
- uint u1,u2,u3,u4,ip;
- uint ipct=0,iplist_size=0,*iplist=NULL,*iplist_new;
- uint pos=0,p;
- uint i,zct,subnet_ct,end_ip;
- char str[256];
+	for (char i = 0; i < 16; i++)
+	{
+		if (((struct in6_addr *)a)->s6_addr[i] < ((struct in6_addr *)b)->s6_addr[i])
+			return -1;
+		else if (((struct in6_addr *)a)->s6_addr[i] > ((struct in6_addr *)b)->s6_addr[i])
+			return 1;
+	}
+	return 0;
+}
+// make presorted array unique. return number of unique items.
+uint32_t unique6(struct in6_addr *pu, uint32_t ct)
+{
+	uint32_t i, j, k;
+	for (i = j = 0; j < ct; i++)
+	{
+		for (k = j++; j < ct && !memcmp(pu + j, pu + k, sizeof(struct in6_addr)); j++);
+		pu[i] = pu[k];
+	}
+	return i;
+}
+void mask_from_bitcount6(uint32_t zct, struct in6_addr *a)
+{
+	if (zct > 128) zct = 128;
+	int32_t n = zct < 128 ? (127 - zct) >> 3 : -1;
+	for (int32_t i = 0; i < sizeof(a->s6_addr); i++)
+		a->s6_addr[i] = i > n ? 0x00 : i < n ? 0xFF : ~((1 << (zct & 7)) - 1);
+}
+// result = a & b
+void ip6_and(const struct in6_addr *a, const struct in6_addr *b, struct in6_addr *result)
+{
+	for (uint8_t i = 0; i < (sizeof(a->s6_addr) / sizeof(uint32_t)); i++)
+		((uint32_t*)result->s6_addr)[i] = ((uint32_t*)a->s6_addr)[i] & ((uint32_t*)b->s6_addr)[i];
+}
 
- while (fgets(str,sizeof(str),stdin))
- {
-  if ((i=sscanf(str,"%u.%u.%u.%u/%u",&u1,&u2,&u3,&u4,&zct))>=4 && !(u1 & 0xFFFFFF00) && !(u2 & 0xFFFFFF00) && !(u3 & 0xFFFFFF00) && !(u4 & 0xFFFFFF00))
-  {
-   if (i==5 && zct!=32)
-   {
-    // we have subnet x.x.x.x/y
-    // output it as is if valid, ignore otherwise
-    if (zct<32)
-     printf("%u.%u.%u.%u/%u\n",u1,u2,u3,u4,zct);
-   }
-   else
-   {
-    ip = u1<<24 | u2<<16 | u3<<8 | u4;
-    if (ipct>=iplist_size)
-    {
-      iplist_size += ALLOC_STEP;
-      iplist_new = (uint*)(iplist ? realloc(iplist,sizeof(*iplist)*iplist_size) : malloc(sizeof(*iplist)*iplist_size));
-      if (!iplist_new)
-      {
-        free(iplist);
-        fprintf(stderr,"out of memory\n");
-        return 100;
-      }
-      iplist = iplist_new;
-    }
-    iplist[ipct++]= ip;
-   }
-  }
- }
 
- gnu_quicksort(iplist,ipct,sizeof(*iplist),ucmp,NULL);
- ipct = unique(iplist,ipct);
+void rtrim(char *s)
+{
+	if (s)
+		for (char *p = s + strlen(s) - 1; p >= s && (*p == '\n' || *p == '\r'); p--) *p = '\0';
+}
 
- while(pos<ipct)
- {
-  uint mask,ip_start,ip_end,ip_ct,subnet_ct,pos_end;
- 
-  // find largest possible network with enough ip coverage
-  for(zct=ZCT_MAX ; zct>=ZCT_MIN ; zct--)
-  {
-    mask = mask_from_bitcount(zct);
-    ip_start = iplist[pos] & mask;
-    subnet_ct = ~mask+1;
-    if (iplist[pos]>(ip_start+subnet_ct*(PCTDIV-PCTMULT)/PCTDIV))
-	continue; // ip is higher than (1-PCT). definitely coverage is not enough. skip searching
-    ip_end = ip_start | ~mask;
-    for(p=pos, ip_ct=0 ; p<ipct && iplist[p]<=ip_end; p++) ip_ct++; // count ips within subnet range
-    if (ip_ct>=(subnet_ct*PCTMULT/PCTDIV))
-    {
-	// network found
-	pos_end = p;
-        break;
-    }
-  }
-  if (zct<ZCT_MIN) zct=0, ip_start=iplist[pos], pos_end=pos+1; // network not found, use single ip
 
-  u1 = ip_start>>24;
-  u2 = (ip_start>>16) & 0xFF;
-  u3 = (ip_start>>8) & 0xFF;
-  u4 = ip_start & 0xFF;
-  printf(zct ? "%u.%u.%u.%u/%u\n" : "%u.%u.%u.%u\n", u1, u2, u3, u4, 32-zct);
+struct params_s
+{
+	bool ipv6;
+	uint32_t pctmult, pctdiv; // for v4
+	uint32_t zct_min, zct_max; // for v4 and v6
+	uint32_t v6_threshold; // for v4
+} params;
 
-  pos = pos_end;
- }
 
- free(iplist);
- return 0;
+void exithelp()
+{
+	printf(
+		" -4\t\t\t\t; ipv4 list (default)\n"
+		" -6\t\t\t\t; ipv6 list\n"
+		" --prefix-length=min[-max]\t; consider prefix lengths from 'min' to 'max'. examples : 22-30 (ipv4), 56-64 (ipv6)\n"
+		" --v4-threshold=mul/div\t\t; ipv4 only : include subnets with more than mul/div ips. example : 3/4\n"
+		" --v6-threshold=N\t\t; ipv6 only : include subnets with more than N v6 ips. example : 5\n"
+	);
+	exit(1);
+}
+
+void parse_params(int argc, char *argv[])
+{
+	int option_index = 0;
+	int v, i;
+	uint32_t plen1=-1, plen2=-1;
+
+	memset(&params, 0, sizeof(params));
+	params.pctmult = DEFAULT_PCTMULT;
+	params.pctdiv = DEFAULT_PCTDIV;
+	params.v6_threshold = DEFAULT_V6_THRESHOLD;
+
+	const struct option long_options[] = {
+		{ "help",no_argument,0,0 },// optidx=0
+		{ "h",no_argument,0,0 },// optidx=1
+		{ "4",no_argument,0,0 },// optidx=2
+		{ "6",no_argument,0,0 },// optidx=3
+		{ "prefix-length",required_argument,0,0 },// optidx=4
+		{ "v4-threshold",required_argument,0,0 },// optidx=5
+		{ "v6-threshold",required_argument,0,0 },// optidx=6
+		{ NULL,0,NULL,0 }
+	};
+	while ((v = getopt_long_only(argc, argv, "", long_options, &option_index)) != -1)
+	{
+		if (v) exithelp();
+		switch (option_index)
+		{
+		case 0:
+		case 1:
+			exithelp();
+			break;
+		case 2:
+			params.ipv6 = false;
+			break;
+		case 3:
+			params.ipv6 = true;
+			break;
+		case 4:
+			i = sscanf(optarg,"%u-%u",&plen1,&plen2);
+			if (i == 1) plen2 = plen1;
+			if (!i || plen2<plen1 || !plen1 || !plen2)
+			{
+				fprintf(stderr, "invalid parameter for prefix-length : %s\n", optarg);
+				exit(1);
+			}
+			break;
+		case 5:
+			i = sscanf(optarg, "%u/%u", &params.pctmult, &params.pctdiv);
+			if (i!=2 || params.pctdiv<2 || params.pctmult<1 || params.pctmult>=params.pctdiv)
+			{
+				fprintf(stderr, "invalid parameter for v4-threshold : %s\n", optarg);
+				exit(1);
+			}
+			break;
+		case 6:
+			i = sscanf(optarg, "%u", &params.v6_threshold);
+			if (i != 1 || params.v6_threshold<1)
+			{
+				fprintf(stderr, "invalid parameter for v6-threshold : %s\n", optarg);
+				exit(1);
+			}
+			break;
+		}
+	}
+	if (plen1 != -1 && (!params.ipv6 && (plen1>31 || plen2>31) || params.ipv6 && (plen1>127 || plen2>127)))
+	{
+		fprintf(stderr, "invalid parameter for prefix-length\n");
+		exit(1);
+	}
+	params.zct_min = params.ipv6 ? plen2==-1 ? DEFAULT_V6_ZCT_MIN : 128-plen2 : plen2==-1 ? DEFAULT_V4_ZCT_MIN : 32-plen2;
+	params.zct_max = params.ipv6 ? plen1==-1 ? DEFAULT_V6_ZCT_MAX : 128-plen1 : plen1==-1 ? DEFAULT_V4_ZCT_MAX : 32-plen1;
+}
+
+
+int main(int argc, char **argv)
+{
+	char str[256];
+	uint32_t ipct = 0, iplist_size = 0;
+	uint32_t pos = 0, p;
+	bool b6 = argc >= 2 && !strcmp(argv[1], "-6");
+
+	parse_params(argc, argv);
+
+	if (params.ipv6) // ipv6
+	{
+		struct in6_addr a;
+		uint32_t zct;
+		char *s;
+		struct in6_addr *iplist = NULL, *iplist_new;
+
+		while (fgets(str, sizeof(str), stdin))
+		{
+			rtrim(str);
+			zct = 128;
+			if (s = strchr(str, '/'))
+				sscanf(s + 1, "%u", &zct);
+			if (zct < 128)
+				// we have subnet ip6/y
+				// output it as is
+				printf("%s\n", str);
+			else if (zct == 128)
+			{
+				if (s) *s = '\0'; // remove /prefix part
+				if (inet_pton(AF_INET6, str, &a))
+				{
+					if (ipct >= iplist_size)
+					{
+						iplist_size += ALLOC_STEP;
+						iplist_new = (struct in6_addr*)(iplist ? realloc(iplist, sizeof(*iplist)*iplist_size) : malloc(sizeof(*iplist)*iplist_size));
+						if (!iplist_new)
+						{
+							free(iplist);
+							fprintf(stderr, "out of memory\n");
+							return 100;
+						}
+						iplist = iplist_new;
+					}
+					iplist[ipct++] = a;
+				}
+			}
+		}
+		gnu_quicksort(iplist, ipct, sizeof(*iplist), cmp6, NULL);
+		ipct = unique6(iplist, ipct);
+
+		/*
+		for(uint32_t i=0;i<ipct;i++)
+		 if (inet_ntop(AF_INET6,iplist+i,str,256))
+		  printf("%s\n",str);
+		printf("\n");
+		*/
+		while (pos < ipct)
+		{
+			struct in6_addr mask, ip_start, ip, ip_ct_max_ip;
+			uint32_t ip_ct, pos_end;
+			uint32_t ip_ct_max = 0, ip_ct_max_zct = 0;
+
+			ip_ct_max_ip = iplist[pos];
+			pos_end = pos + 1;
+			// find largest possible network with maximum ip coverage with no less than ip6_subnet_threshold addresses
+			for (zct = params.zct_min; zct <= params.zct_max; zct++)
+			{
+				mask_from_bitcount6(zct, &mask);
+				ip6_and(iplist + pos, &mask, &ip_start);
+				for (p = pos + 1, ip_ct = 1; p < ipct; p++, ip_ct++)
+				{
+					ip6_and(iplist + p, &mask, &ip);
+					inet_ntop(AF_INET6, &ip_start, str, sizeof(str));
+					if (cmp6(&ip_start, &ip, NULL))
+						break;
+				}
+				if (ip_ct >= params.v6_threshold)
+				{
+					if (ip_ct > ip_ct_max)
+					{
+						ip_ct_max = ip_ct;
+						ip_ct_max_zct = zct;
+						ip_ct_max_ip = ip_start;
+						pos_end = p;
+					}
+				}
+			}
+			inet_ntop(AF_INET6, &ip_ct_max_ip, str, sizeof(str));
+			printf(ip_ct_max_zct ? "%s/%u\n" : "%s\n", str, 128 - ip_ct_max_zct);
+
+			pos = pos_end;
+		}
+
+		free(iplist);
+	}
+	else // ipv4
+	{
+		uint32_t u1, u2, u3, u4, ip;
+		uint32_t *iplist = NULL, *iplist_new;
+		uint32_t i, zct, subnet_ct, end_ip;
+
+		while (fgets(str, sizeof(str), stdin))
+		{
+			if ((i = sscanf(str, "%u.%u.%u.%u/%u", &u1, &u2, &u3, &u4, &zct)) >= 4 && !(u1 & 0xFFFFFF00) && !(u2 & 0xFFFFFF00) && !(u3 & 0xFFFFFF00) && !(u4 & 0xFFFFFF00))
+			{
+				if (i == 5 && zct != 32)
+				{
+					// we have subnet x.x.x.x/y
+					// output it as is if valid, ignore otherwise
+					if (zct < 32)
+						printf("%u.%u.%u.%u/%u\n", u1, u2, u3, u4, zct);
+				}
+				else
+				{
+					ip = u1 << 24 | u2 << 16 | u3 << 8 | u4;
+					if (ipct >= iplist_size)
+					{
+						iplist_size += ALLOC_STEP;
+						iplist_new = (uint32_t*)(iplist ? realloc(iplist, sizeof(*iplist)*iplist_size) : malloc(sizeof(*iplist)*iplist_size));
+						if (!iplist_new)
+						{
+							free(iplist);
+							fprintf(stderr, "out of memory\n");
+							return 100;
+						}
+						iplist = iplist_new;
+					}
+					iplist[ipct++] = ip;
+				}
+			}
+		}
+
+		gnu_quicksort(iplist, ipct, sizeof(*iplist), ucmp, NULL);
+		ipct = unique(iplist, ipct);
+
+		while (pos < ipct)
+		{
+			uint32_t mask, ip_start, ip_end, ip_ct, subnet_ct, pos_end;
+
+			// find largest possible network with enough ip coverage
+			for (zct = params.zct_max; zct >= params.zct_min; zct--)
+			{
+				mask = mask_from_bitcount(zct);
+				ip_start = iplist[pos] & mask;
+				subnet_ct = ~mask + 1;
+				if (iplist[pos] > (ip_start + subnet_ct*(params.pctdiv - params.pctmult) / params.pctdiv))
+					continue; // ip is higher than (1-PCT). definitely coverage is not enough. skip searching
+				ip_end = ip_start | ~mask;
+				for (p = pos, ip_ct = 0; p < ipct && iplist[p] <= ip_end; p++) ip_ct++; // count ips within subnet range
+				if (ip_ct >= (subnet_ct*params.pctmult / params.pctdiv))
+				{
+					// network found
+					pos_end = p;
+					break;
+				}
+			}
+			if (zct < params.zct_min) zct = 0, ip_start = iplist[pos], pos_end = pos + 1; // network not found, use single ip
+
+			u1 = ip_start >> 24;
+			u2 = (ip_start >> 16) & 0xFF;
+			u3 = (ip_start >> 8) & 0xFF;
+			u4 = ip_start & 0xFF;
+			printf(zct ? "%u.%u.%u.%u/%u\n" : "%u.%u.%u.%u\n", u1, u2, u3, u4, 32 - zct);
+
+			pos = pos_end;
+		}
+
+		free(iplist);
+	}
+
+	return 0;
 }
