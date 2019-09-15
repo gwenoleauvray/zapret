@@ -104,7 +104,7 @@ struct params_s
 	bool ipv6;
 	uint32_t pctmult, pctdiv; // for v4
 	uint32_t zct_min, zct_max; // for v4 and v6
-	uint32_t v6_threshold; // for v4
+	uint32_t v6_threshold; // for v6
 } params;
 
 
