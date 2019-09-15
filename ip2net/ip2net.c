@@ -58,7 +58,7 @@ uint32_t unique(uint32_t *pu, uint32_t ct)
 
 int cmp6(const void * a, const void * b, void *arg)
 {
-	for (char i = 0; i < 16; i++)
+	for (uint8_t i = 0; i < sizeof(((struct in6_addr *)0)->s6_addr); i++)
 	{
 		if (((struct in6_addr *)a)->s6_addr[i] < ((struct in6_addr *)b)->s6_addr[i])
 			return -1;
@@ -197,48 +197,47 @@ void parse_params(int argc, char *argv[])
 int main(int argc, char **argv)
 {
 	char str[256];
-	uint32_t ipct = 0, iplist_size = 0;
-	uint32_t pos = 0, p;
-	bool b6 = argc >= 2 && !strcmp(argv[1], "-6");
+	uint32_t ipct = 0, iplist_size = 0, pos = 0, p, zct, ip_ct, pos_end;
 
 	parse_params(argc, argv);
 
 	if (params.ipv6) // ipv6
 	{
-		struct in6_addr a;
-		uint32_t zct;
 		char *s;
-		struct in6_addr *iplist = NULL, *iplist_new;
+		struct in6_addr a, *iplist = NULL, *iplist_new;
 
 		while (fgets(str, sizeof(str), stdin))
 		{
 			rtrim(str);
 			zct = 128;
 			if (s = strchr(str, '/'))
-				sscanf(s + 1, "%u", &zct);
-			if (zct < 128)
-				// we have subnet ip6/y
-				// output it as is
-				printf("%s\n", str);
-			else if (zct == 128)
 			{
-				if (s) *s = '\0'; // remove /prefix part
-				if (inet_pton(AF_INET6, str, &a))
+				sscanf(s + 1, "%u", &zct);
+				*s = '\0';
+			}
+			if (inet_pton(AF_INET6, str, &a))
+			{
+				if (zct < 128)
 				{
-					if (ipct >= iplist_size)
-					{
-						iplist_size += ALLOC_STEP;
-						iplist_new = (struct in6_addr*)(iplist ? realloc(iplist, sizeof(*iplist)*iplist_size) : malloc(sizeof(*iplist)*iplist_size));
-						if (!iplist_new)
-						{
-							free(iplist);
-							fprintf(stderr, "out of memory\n");
-							return 100;
-						}
-						iplist = iplist_new;
-					}
-					iplist[ipct++] = a;
+					// we have subnet ip6/y
+					// output it as is
+					*s = '/';
+					printf("%s\n", str);
+					continue;
 				}
+				if (ipct >= iplist_size)
+				{
+					iplist_size += ALLOC_STEP;
+					iplist_new = (struct in6_addr*)(iplist ? realloc(iplist, sizeof(*iplist)*iplist_size) : malloc(sizeof(*iplist)*iplist_size));
+					if (!iplist_new)
+					{
+						free(iplist);
+						fprintf(stderr, "out of memory\n");
+						return 100;
+					}
+					iplist = iplist_new;
+				}
+				iplist[ipct++] = a;
 			}
 		}
 		gnu_quicksort(iplist, ipct, sizeof(*iplist), cmp6, NULL);
@@ -253,13 +252,12 @@ int main(int argc, char **argv)
 		while (pos < ipct)
 		{
 			struct in6_addr mask, ip_start, ip, ip_ct_max_ip;
-			uint32_t ip_ct, pos_end;
-			uint32_t ip_ct_max = 0, ip_ct_max_zct = 0;
+			uint32_t ip_ct_best = 0, zct_best = 0;
 
 			ip_ct_max_ip = iplist[pos];
 			pos_end = pos + 1;
 			// find smallest network with maximum ip coverage with no less than ip6_subnet_threshold addresses
-			for (zct = params.zct_min; zct <= params.zct_max; zct++)
+			for (zct = params.zct_max; zct >= params.zct_min; zct--)
 			{
 				mask_from_bitcount6(zct, &mask);
 				ip6_and(iplist + pos, &mask, &ip_start);
@@ -269,19 +267,23 @@ int main(int argc, char **argv)
 					if (memcmp(&ip_start, &ip, sizeof(ip)))
 						break;
 				}
+				if (ip_ct == 1) break;
 				if (ip_ct >= params.v6_threshold)
 				{
-					if (ip_ct > ip_ct_max)
+					// network found. but is there smaller network with the same ip_ct ? dont do carpet bombing is possible, use smaller subnets
+					if (!ip_ct_best || ip_ct == ip_ct_best)
 					{
-						ip_ct_max = ip_ct;
-						ip_ct_max_zct = zct;
-						ip_ct_max_ip = ip_start;
+						ip_ct_best = ip_ct;
+						zct_best = zct;
 						pos_end = p;
 					}
+					else
+						break;
 				}
 			}
-			inet_ntop(AF_INET6, &ip_ct_max_ip, str, sizeof(str));
-			printf(ip_ct_max_zct ? "%s/%u\n" : "%s\n", str, 128 - ip_ct_max_zct);
+			if (!zct_best) ip_start = iplist[pos], pos_end = pos + 1; // network not found, use single ip
+			inet_ntop(AF_INET6, &ip_start, str, sizeof(str));
+			printf(zct_best ? "%s/%u\n" : "%s\n", str, 128 - zct_best);
 
 			pos = pos_end;
 		}
@@ -292,7 +294,7 @@ int main(int argc, char **argv)
 	{
 		uint32_t u1, u2, u3, u4, ip;
 		uint32_t *iplist = NULL, *iplist_new;
-		uint32_t i, zct, subnet_ct, end_ip;
+		uint32_t i, subnet_ct, end_ip;
 
 		while (fgets(str, sizeof(str), stdin))
 		{
@@ -330,9 +332,10 @@ int main(int argc, char **argv)
 
 		while (pos < ipct)
 		{
-			uint32_t mask, ip_start, ip_end, ip_ct, subnet_ct, pos_end;
+			uint32_t mask, ip_start, ip_end, subnet_ct;
+			uint32_t ip_ct_best = 0, zct_best = 0;
 
-			// find largest possible network with enough ip coverage
+			// find smallest network with maximum ip coverage with no less than mul/div percent addresses
 			for (zct = params.zct_max; zct >= params.zct_min; zct--)
 			{
 				mask = mask_from_bitcount(zct);
@@ -341,21 +344,28 @@ int main(int argc, char **argv)
 				if (iplist[pos] > (ip_start + subnet_ct*(params.pctdiv - params.pctmult) / params.pctdiv))
 					continue; // ip is higher than (1-PCT). definitely coverage is not enough. skip searching
 				ip_end = ip_start | ~mask;
-				for (p = pos, ip_ct = 0; p < ipct && iplist[p] <= ip_end; p++) ip_ct++; // count ips within subnet range
+				for (p=pos+1, ip_ct=1; p < ipct && iplist[p] <= ip_end; p++) ip_ct++; // count ips within subnet range
+				if (ip_ct == 1) break;
 				if (ip_ct >= (subnet_ct*params.pctmult / params.pctdiv))
 				{
-					// network found
-					pos_end = p;
-					break;
+					// network found. but is there smaller network with the same ip_ct ? dont do carpet bombing is possible, use smaller subnets
+					if (!ip_ct_best || ip_ct == ip_ct_best)
+					{
+						ip_ct_best = ip_ct;
+						zct_best = zct;
+						pos_end = p;
+					}
+					else
+						break;
 				}
 			}
-			if (zct < params.zct_min) zct = 0, ip_start = iplist[pos], pos_end = pos + 1; // network not found, use single ip
+			if (!zct_best) ip_start = iplist[pos], pos_end = pos + 1; // network not found, use single ip
 
 			u1 = ip_start >> 24;
 			u2 = (ip_start >> 16) & 0xFF;
 			u3 = (ip_start >> 8) & 0xFF;
 			u4 = ip_start & 0xFF;
-			printf(zct ? "%u.%u.%u.%u/%u\n" : "%u.%u.%u.%u\n", u1, u2, u3, u4, 32 - zct);
+			printf(zct_best ? "%u.%u.%u.%u/%u\n" : "%u.%u.%u.%u\n", u1, u2, u3, u4, 32 - zct_best);
 
 			pos = pos_end;
 		}
