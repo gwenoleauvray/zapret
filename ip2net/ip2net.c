@@ -6,9 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
-#include <linux/types.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <getopt.h>
 #include "qsort.h"
