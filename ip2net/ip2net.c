@@ -251,10 +251,9 @@ int main(int argc, char **argv)
 		*/
 		while (pos < ipct)
 		{
-			struct in6_addr mask, ip_start, ip, ip_ct_max_ip;
+			struct in6_addr mask, ip_start, ip;
 			uint32_t ip_ct_best = 0, zct_best = 0;
 
-			ip_ct_max_ip = iplist[pos];
 			pos_end = pos + 1;
 			// find smallest network with maximum ip coverage with no less than ip6_subnet_threshold addresses
 			for (zct = params.zct_max; zct >= params.zct_min; zct--)
