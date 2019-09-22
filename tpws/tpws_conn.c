@@ -672,8 +672,7 @@ bool check_connection_attempt(tproxy_conn_t *conn, int efd)
 			return false;
 		conn->state = CONN_AVAILABLE;
 	}
-	proxy_remote_conn_ack(conn);
-	return !errn;
+	return proxy_remote_conn_ack(conn) && !errn;
 }
 
 
@@ -825,7 +824,7 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 					}
 					else
 					{
-						// socks4 does not have separate handshake phase. its starts with connect request
+						// socks4 does not have separate handshake phase. it starts with connect request
 						// ipv6 and domain resolving are not supported
 						s4_req *m = (s4_req*)buf;
 						if (!S4_REQ_CONNECT_VALID(m, rd))
