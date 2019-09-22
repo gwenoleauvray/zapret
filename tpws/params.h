@@ -13,6 +13,7 @@ struct params_s
 	bool bind_if6;
 	bool bindll,bindll_force;
 	int bind_wait_ifup,bind_wait_ip,bind_wait_ip_ll;
+	uint8_t proxy_type;
 	uid_t uid;
 	gid_t gid;
 	bool daemon;

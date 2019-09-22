@@ -30,6 +30,12 @@ struct send_buffer
 };
 typedef struct send_buffer send_buffer_t;
 
+enum{
+	CONN_TYPE_TRANSPARENT=0,
+	CONN_TYPE_SOCKS
+};
+typedef uint8_t conn_type_t;
+
 struct tproxy_conn
 {
 	bool remote; // false - accepted, true - connected
@@ -37,15 +43,25 @@ struct tproxy_conn
 	int fd;
 	int splice_pipe[2];
 	conn_state_t state;
-	
+	conn_type_t conn_type;
+
 	struct tproxy_conn *partner; // other leg
 	//Create the struct which contains ptrs to next/prev element
 	TAILQ_ENTRY(tproxy_conn) conn_ptrs;
 
+	// socks5 state machine
+	enum {
+		S_WAIT_HANDSHAKE=0,
+		S_WAIT_REQUEST,
+		S_WAIT_CONNECTION,
+		S_TCP
+	} socks_state;
+	uint8_t socks_ver;
+
 	// these value are used in flow control. we do not use ET (edge triggered) polling
 	// if we dont disable notifications they will come endlessly until condition becomes false and will eat all cpu time
 	bool bFlowIn,bFlowOut, bFlowInPrev,bFlowOutPrev, bPrevRdhup;
-	
+
 	// total read,write
 	size_t trd,twr;
 	// number of epoll_wait events

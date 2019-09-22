@@ -160,6 +160,7 @@ tpws is transparent proxy.
  --bind-wait-ip=<sec>           ; after ifup wait for ip address to appear up to N seconds
  --bind-wait-ip-linklocal=<sec> ; accept only link locals first N seconds then any
  --port=<port>
+ --socks			; implement socks4/5 proxy instead of transparent proxy
  --maxconn=<max_connections>
  --hostlist=<filename>          ; only act on host in the list (one host per line, subdomains auto apply)
  --split-http-req=method|host
@@ -187,6 +188,9 @@ The --bind-wait * parameters can help in situations where you need to get IP fro
 or not configured.
 In different systems, ifup events are caught in different ways and do not guarantee that the interface has already received an IP address of a certain type.
 In the general case, there is no single mechanism to hang oneself on an event of the type "link local address appeared on the X interface."
+
+in socks proxy mode no additional system privileges are required
+connection to local IPs of the system where tpws runs are prohibited
 
 Ways to get a list of blocked IP
 --------------------------------

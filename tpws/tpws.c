@@ -110,6 +110,7 @@ void exithelp()
 		" --bind-wait-ifup=<sec>\t\t; wait for interface to appear and up\n"
 		" --bind-wait-ip=<sec>\t\t; after ifup wait for ip address to appear up to N seconds\n"
 		" --bind-wait-ip-linklocal=<sec>\t; accept only link locals first N seconds then any\n"
+		" --socks\t\t\t; implement socks4/5 proxy instead of transparent proxy\n"
 		" --local-rcvbuf=<bytes>\n"
 		" --local-sndbuf=<bytes>\n"
 		" --remote-rcvbuf=<bytes>\n"
@@ -195,6 +196,7 @@ void parse_params(int argc, char *argv[])
 		{ "local-sndbuf",required_argument,0,0 },// optidx=28
 		{ "remote-rcvbuf",required_argument,0,0 },// optidx=29
 		{ "remote-sndbuf",required_argument,0,0 },// optidx=30
+		{ "socks",no_argument,0,0 },// optidx=31
 		{ NULL,0,NULL,0 }
 	};
 	while ((v = getopt_long_only(argc, argv, "", long_options, &option_index)) != -1)
@@ -365,6 +367,9 @@ void parse_params(int argc, char *argv[])
 			break;
 		case 30: /* remote-sndbuf */
 			params.remote_sndbuf = atoi(optarg)/2;
+			break;
+		case 31: /* socks */
+			params.proxy_type = CONN_TYPE_SOCKS;
 			break;
 		}
 	}
@@ -722,10 +727,13 @@ int main(int argc, char *argv[]) {
 	
 	//Mark that this socket can be used for transparent proxying
 	//This allows the socket to accept connections for non-local IPs
-	if (setsockopt(listen_fd, SOL_IP, IP_TRANSPARENT, &yes, sizeof(yes)) == -1)
+	if (params.proxy_type==CONN_TYPE_TRANSPARENT)
 	{
-		perror("setsockopt (IP_TRANSPARENT): ");
-		goto exiterr;
+		if (setsockopt(listen_fd, SOL_IP, IP_TRANSPARENT, &yes, sizeof(yes)) == -1)
+		{
+			perror("setsockopt (IP_TRANSPARENT): ");
+			goto exiterr;
+		}
 	}
 
 	if (!set_socket_buffers(listen_fd, params.local_rcvbuf, params.local_sndbuf))
@@ -772,7 +780,8 @@ int main(int argc, char *argv[]) {
 	}
 
 	fprintf(stderr, "Will listen to port %d\n", params.port);
-	if (!params.tamper) fprintf(stderr, "Running in TCP proxy mode (no tampering)\n");
+	fprintf(stderr, params.proxy_type==CONN_TYPE_SOCKS ? "socks mode\n" : "transparent proxy mode\n");
+	if (!params.tamper) fprintf(stderr, "TCP proxy mode (no tampering)\n");
 
 	signal(SIGHUP, onhup); 
 

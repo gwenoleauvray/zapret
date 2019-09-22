@@ -15,15 +15,91 @@
 #include <fcntl.h>
 #include <linux/netfilter_ipv4.h>
 #include <ifaddrs.h>
+#include <netdb.h>
 
 #include "tpws.h"
 #include "tpws_conn.h"
 #include "tamper.h"
 #include "params.h"
+#include "socks.h"
 
 #ifndef IP6T_SO_ORIGINAL_DST
  #define IP6T_SO_ORIGINAL_DST 80
 #endif
+
+
+bool socks5_send_rep(int fd,uint8_t rep)
+{
+	s5_rep s5rep;
+	memset(&s5rep,0,sizeof(s5rep));
+	s5rep.ver = 5;
+	s5rep.rep = rep;
+	s5rep.atyp = S5_ATYP_IP4;
+	return send(fd,&s5rep,sizeof(s5rep),MSG_DONTWAIT)==sizeof(s5rep);
+}
+bool socks5_send_rep_errno(int fd,int errn)
+{
+	uint8_t rep;
+	switch(errn)
+	{
+		case 0:
+			rep=S5_REP_OK; break;
+		case ECONNREFUSED:
+			rep=S5_REP_CONN_REFUSED; break;
+		case ENETUNREACH:
+			rep=S5_REP_NETWORK_UNREACHABLE; break;
+		case ETIMEDOUT:
+		case EHOSTUNREACH:
+			rep=S5_REP_HOST_UNREACHABLE; break;
+		default:
+			rep=S5_REP_GENERAL_FAILURE;
+	}
+	return socks5_send_rep(fd,rep);
+}
+bool socks4_send_rep(int fd, uint8_t rep)
+{
+	s4_rep s4rep;
+	memset(&s4rep, 0, sizeof(s4rep));
+	s4rep.rep = rep;
+	return send(fd, &s4rep, sizeof(s4rep), MSG_DONTWAIT) == sizeof(s4rep);
+}
+bool socks4_send_rep_errno(int fd, int errn)
+{
+	return socks4_send_rep(fd, errn ? S4_REP_FAILED : S4_REP_OK);
+}
+bool socks_send_rep(uint8_t ver, int fd, uint8_t rep5)
+{
+	return ver==5 ? socks5_send_rep(fd, rep5) : socks4_send_rep(fd, rep5 ? S4_REP_FAILED : S4_REP_OK);
+}
+
+bool socks_send_rep_errno(uint8_t ver, int fd, int errn)
+{
+	return ver==5 ? socks5_send_rep_errno(fd,errn) : socks4_send_rep_errno(fd, errn);
+}
+
+bool proxy_remote_conn_ack(tproxy_conn_t *conn)
+{
+	// if proxy mode acknowledge connection request
+	// conn = remote. conn->partner = local
+	if (!conn->remote || !conn->partner) return false;
+	bool bres = true;
+	switch(conn->partner->conn_type)
+	{
+		case CONN_TYPE_SOCKS:
+			if (conn->partner->socks_state==S_WAIT_CONNECTION)
+			{
+				int errn;
+				socklen_t optlen = sizeof(errn);
+				if(getsockopt(conn->fd, SOL_SOCKET, SO_ERROR, &errn, &optlen) == -1)
+					errn=errno;
+				conn->partner->socks_state=S_TCP;
+				bres = socks_send_rep_errno(conn->partner->socks_ver,conn->partner->fd, errn);
+				DBGPRINT("socks connection acknowledgement. bres=%d remote_errn=%d remote_fd=%d local_fd=%d",bres,errn,conn->fd,conn->partner->fd);
+			}
+			break;
+	}
+	return bres;
+}
 
 
 bool send_buffer_create(send_buffer_t *sb, char *data, size_t len)
@@ -113,6 +189,12 @@ ssize_t send_buffers_send(send_buffer_t *sb_array, int count, int fd, size_t *re
 	if (real_wr) *real_wr = twr;
 	return twr;
 }
+
+bool conn_in_tcp_mode(tproxy_conn_t *conn)
+{
+	return !(conn->conn_type==CONN_TYPE_SOCKS && conn->socks_state!=S_TCP);
+}
+
 bool conn_partner_alive(tproxy_conn_t *conn)
 {
 	return conn->partner && conn->partner->state!=CONN_CLOSED;
@@ -159,7 +241,6 @@ ssize_t send_or_buffer(send_buffer_t *sb, int fd, char *buf, size_t len)
 	}
 	return wr;
 }
-
 
 bool set_linger(int fd)
 {
@@ -214,6 +295,42 @@ bool check_local_ip(const struct sockaddr *saddr)
 	freeifaddrs(addrs);
 	return false;
 }
+void print_addrinfo(const struct addrinfo *ai)
+{
+	char str[64];
+	while (ai)
+	{
+		switch (ai->ai_family)
+		{
+		case AF_INET:
+			if (inet_ntop(ai->ai_family, &((struct sockaddr_in*)ai->ai_addr)->sin_addr, str, sizeof(str)))
+				printf("%s\n", str);
+			break;
+		case AF_INET6:
+			if (inet_ntop(ai->ai_family, &((struct sockaddr_in6*)ai->ai_addr)->sin6_addr, str, sizeof(str)))
+				printf( "%s\n", str);
+			break;
+		}
+		ai = ai->ai_next;
+	}
+}
+void print_sockaddr_storage(const struct sockaddr_storage *ss)
+{
+	char str[64];
+	switch (ss->ss_family)
+	{
+	case AF_INET:
+		if (inet_ntop(ss->ss_family, &((struct sockaddr_in*)ss)->sin_addr, str, sizeof(str)))
+			printf("%s:%d", str, ntohs(((struct sockaddr_in*)ss)->sin_port));
+		break;
+	case AF_INET6:
+		if (inet_ntop(ss->ss_family, &((struct sockaddr_in6*)ss)->sin6_addr, str, sizeof(str)))
+			printf( "%s:%d", str, ntohs(((struct sockaddr_in6*)ss)->sin6_port));
+		break;
+	default:
+		printf("UNKNOWN_FAMILY_%d",ss->ss_family);
+	}
+}
 
 
 static void dbgprint_socket_buffers(int fd)
@@ -252,7 +369,7 @@ bool set_socket_buffers(int fd, int rcvbuf, int sndbuf)
 //Createas a socket and initiates the connection to the host specified by 
 //remote_addr.
 //Returns 0 if something fails, >0 on success (socket fd).
-static int connect_remote(struct sockaddr_storage *remote_addr)
+static int connect_remote(const struct sockaddr_storage *remote_addr)
 {
 	int remote_fd = 0, yes = 1;
     
@@ -433,25 +550,28 @@ bool epoll_set_flow(tproxy_conn_t *conn, bool bFlowIn, bool bFlowOut)
 //Acquires information, initiates a connect and initialises a new connection
 //object. Return NULL if anything fails, pointer to object otherwise
 tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
-        int local_fd, uint16_t listen_port)
+        int local_fd, uint16_t listen_port, conn_type_t proxy_type)
 {
 	struct sockaddr_storage orig_dst;
 	tproxy_conn_t *conn;
 	int remote_fd;
 	int yes=1;
 
-	if(!get_dest_addr(local_fd, &orig_dst))
+	if (proxy_type==CONN_TYPE_TRANSPARENT)
 	{
-		fprintf(stderr, "Could not get destination address\n");
-		close(local_fd);
-		return NULL;
-	}
+		if(!get_dest_addr(local_fd, &orig_dst))
+		{
+			fprintf(stderr, "Could not get destination address\n");
+			close(local_fd);
+			return NULL;
+		}
 
-	if (check_local_ip((struct sockaddr*)&orig_dst) && saport((struct sockaddr*)&orig_dst)==listen_port)
-	{
-		fprintf(stderr, "Dropping connection to local address to the same port to avoid loop\n");
-		close(local_fd);
-		return NULL;
+		if (check_local_ip((struct sockaddr*)&orig_dst) && saport((struct sockaddr*)&orig_dst)==listen_port)
+		{
+			fprintf(stderr, "Dropping connection to local address to the same port to avoid loop\n");
+			close(local_fd);
+			return NULL;
+		}
 	}
 
 	// socket buffers inherited from listen_fd
@@ -464,11 +584,14 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 		return 0;
 	}
 
-	if(!(remote_fd = connect_remote(&orig_dst)))
+	if (proxy_type==CONN_TYPE_TRANSPARENT)
 	{
-		fprintf(stderr, "Failed to connect\n");
-		close(local_fd);
-		return NULL;
+		if(!(remote_fd = connect_remote(&orig_dst)))
+		{
+			fprintf(stderr, "Failed to connect\n");
+			close(local_fd);
+			return NULL;
+		}
 	}
 	
 	if(!(conn = new_conn(local_fd, false)))
@@ -477,32 +600,39 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 		close(local_fd);
 		return NULL;
 	}
+	conn->conn_type = proxy_type; // only local connection has proxy_type. remote is always in tcp mode
 	conn->state = CONN_AVAILABLE; // accepted connection is immediately available
 	conn->efd = efd;
 
-	if(!(conn->partner = new_conn(remote_fd, true)))
+	if (proxy_type==CONN_TYPE_TRANSPARENT)
 	{
-		free_conn(conn);
-		close(remote_fd);
-		return NULL;
-	}
-	conn->partner->partner = conn;
-	conn->partner->efd = efd;
+		if(!(conn->partner = new_conn(remote_fd, true)))
+		{
+			free_conn(conn);
+			close(remote_fd);
+			return NULL;
+		}
+		conn->partner->partner = conn;
+		conn->partner->efd = efd;
 
-	//remote_fd is connecting. Non-blocking connects are signaled as done by
-	//socket being marked as ready for writing
-	if (!epoll_set(conn->partner, EPOLLOUT|EPOLLERR))
-	{
-		free_conn(conn->partner);
-		free_conn(conn);
-		return NULL;
+		//remote_fd is connecting. Non-blocking connects are signaled as done by
+		//socket being marked as ready for writing
+		if (!epoll_set(conn->partner, EPOLLOUT))
+		{
+			free_conn(conn->partner);
+			free_conn(conn);
+			return NULL;
+		}
 	}
 
-	//Local socket can be closed while waiting for connection attempt. I need
-	//to detect this when waiting for connect() to complete. However, I dont
-	//want to get EPOLLIN-events, as I dont want to receive any data before
-	//remote connection is established
-	if (!epoll_set(conn, 0))
+	//Transparent proxy mode :
+	// Local socket can be closed while waiting for connection attempt. I need
+	// to detect this when waiting for connect() to complete. However, I dont
+	// want to get EPOLLIN-events, as I dont want to receive any data before
+	// remote connection is established
+	//Proxy mode : I need to service proxy protocol
+
+	if (!epoll_set(conn, proxy_type==CONN_TYPE_TRANSPARENT ? 0 : (EPOLLIN|EPOLLRDHUP)))
 	{
 		free_conn(conn->partner);
 		free_conn(conn);
@@ -510,7 +640,7 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 	}
 
 	TAILQ_INSERT_HEAD(conn_list, conn, conn_ptrs);
-	TAILQ_INSERT_HEAD(conn_list, conn->partner, conn_ptrs);
+	if (conn->partner) TAILQ_INSERT_HEAD(conn_list, conn->partner, conn_ptrs);
 	return conn;
 } 
 
@@ -519,8 +649,8 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 bool check_connection_attempt(tproxy_conn_t *conn, int efd)
 {
 	int fd_flags = 0;
-	int conn_success = 0;
-	socklen_t optlen = sizeof(conn_success);
+	int errn = 0;
+	socklen_t optlen = sizeof(errn);
 
 	if (conn->state!=CONN_UNAVAILABLE || !conn->remote)
 	{
@@ -530,23 +660,20 @@ bool check_connection_attempt(tproxy_conn_t *conn, int efd)
 	}
 
 	// check the connection was sucessfull. it means its not in in SO_ERROR state
-	if(getsockopt(conn->fd, SOL_SOCKET, SO_ERROR, &conn_success, &optlen) == -1)
+	if(getsockopt(conn->fd, SOL_SOCKET, SO_ERROR, &errn, &optlen) == -1)
 	{
 		perror("getsockopt (SO_ERROR)");
 		return false;
 	}
-	if(conn_success == 0)
+	if (!errn)
 	{
 		printf("Socket fd=%d (remote) connected\n", conn->fd);
-
 		if (!epoll_set_flow(conn, true, false) || !epoll_set_flow(conn->partner, true, false))
 			return false;
-		
-       		conn->state = CONN_AVAILABLE;
-		return true;
+		conn->state = CONN_AVAILABLE;
 	}
-        
-	return false;
+	proxy_remote_conn_ack(conn);
+	return !errn;
 }
 
 
@@ -598,11 +725,212 @@ bool handle_unsent(tproxy_conn_t *conn)
 	return epoll_set_flow_pair(conn);
 }
 
+bool proxy_mode_connect_remote(const struct sockaddr_storage *ss, tproxy_conn_t *conn, struct tailhead *conn_list)
+{
+	int remote_fd;
+
+	printf("socks target for fd=%d is : ", conn->fd);
+	print_sockaddr_storage(ss);
+	printf("\n");
+	if (check_local_ip((struct sockaddr *)ss))
+	{
+		fprintf(stderr, "Dropping connection to local address for security reasons\n");
+		socks_send_rep(conn->socks_ver, conn->fd, S5_REP_NOT_ALLOWED_BY_RULESET);
+		return false;
+	}
+
+	if (!(remote_fd = connect_remote(ss)))
+	{
+		fprintf(stderr, "socks failed to connect (1) errno=%d\n", errno);
+		socks_send_rep_errno(conn->socks_ver, conn->fd, errno);
+		return false;
+	}
+	if (!(conn->partner = new_conn(remote_fd, true)))
+	{
+		close(remote_fd);
+		fprintf(stderr, "socks out-of-memory (1)\n");
+		socks_send_rep(conn->socks_ver, conn->fd, S5_REP_GENERAL_FAILURE);
+		return false;
+	}
+	conn->partner->partner = conn;
+	conn->partner->efd = conn->efd;
+	if (!epoll_set(conn->partner, EPOLLOUT))
+	{
+		fprintf(stderr, "socks epoll_set error %d\n", errno);
+		free_conn(conn->partner);
+		conn->partner = NULL;
+		socks_send_rep(conn->socks_ver, conn->fd, S5_REP_GENERAL_FAILURE);
+		return false;
+	}
+	TAILQ_INSERT_HEAD(conn_list, conn->partner, conn_ptrs);
+	DBGPRINT("socks connecting");
+	conn->socks_state = S_WAIT_CONNECTION;
+	return true;
+}
+
+bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
+{
+	// To simplify things I dont care about buffering. If message splits, I just hang up
+	// in proxy mode messages are short. they can be split only intentionally. all normal programs send them in one packet
+
+	ssize_t rd,wr;
+	char buf[sizeof(s5_req)]; // s5_req - the largest possible req
+	struct sockaddr_storage ss;
+
+	// receive proxy control message
+	rd=recv(conn->fd, buf, sizeof(buf), MSG_DONTWAIT);
+	DBGPRINT("handle_proxy_mode rd=%zd",rd);
+	if (rd<1) return false; // hangup
+	switch(conn->conn_type)
+	{
+		case CONN_TYPE_SOCKS:
+			switch(conn->socks_state)
+			{
+				case S_WAIT_HANDSHAKE:
+					DBGPRINT("S_WAIT_HANDSHAKE");
+					if (buf[0] != 5 && buf[0] != 4) return false; // unknown socks version
+					conn->socks_ver = buf[0];
+					DBGPRINT("socks version %u", conn->socks_ver);
+					if (conn->socks_ver==5)
+					{
+						s5_handshake *m = (s5_handshake*)buf;
+						s5_handshake_ack ack;
+						uint8_t k;
+
+						ack.ver=5;
+						if (!S5_REQ_HANDHSHAKE_VALID(m,rd))
+						{
+							DBGPRINT("socks5 proxy handshake invalid");
+							return false;
+						}
+						for (k=0;k<m->nmethods;k++) if (m->methods[k]==S5_AUTH_NONE) break;
+						if (k>=m->nmethods)
+						{
+							DBGPRINT("socks5 client wants authentication but we dont support");
+							ack.method=S5_AUTH_UNACCEPTABLE;
+							wr=send(conn->fd,&ack,sizeof(ack),MSG_DONTWAIT);
+							return false;
+						}
+						DBGPRINT("socks5 recv valid handshake");
+						ack.method=S5_AUTH_NONE;
+						wr=send(conn->fd,&ack,sizeof(ack),MSG_DONTWAIT);
+						if (wr!=sizeof(ack))
+						{
+							DBGPRINT("socks5 handshake ack send error. wr=%zd errno=%d",wr,errno);
+							return false;
+						}
+						DBGPRINT("socks5 send handshake ack OK");
+						conn->socks_state=S_WAIT_REQUEST;
+						return true;
+					}
+					else
+					{
+						// socks4 does not have separate handshake phase. its starts with connect request
+						// ipv6 and domain resolving are not supported
+						s4_req *m = (s4_req*)buf;
+						if (!S4_REQ_CONNECT_VALID(m, rd))
+						{
+							DBGPRINT("socks4 connect request invalid");
+							return false;
+						}
+						if (!m->port)
+						{
+							DBGPRINT("socks4 zero port");
+							socks4_send_rep(conn->fd, S4_REP_FAILED);
+							return false;
+						}
+						ss.ss_family = AF_INET;
+						((struct sockaddr_in*)&ss)->sin_port = m->port;
+						((struct sockaddr_in*)&ss)->sin_addr.s_addr = m->ip;
+						return proxy_mode_connect_remote(&ss, conn, conn_list);
+					}
+					break;
+				case S_WAIT_REQUEST:
+					DBGPRINT("S_WAIT_REQUEST");
+					{
+						s5_req *m = (s5_req*)buf;
+						char str[64];
+
+						if (!S5_REQ_CONNECT_VALID(m,rd))
+						{
+							DBGPRINT("socks5 connect request invalid");
+							return false;
+						}
+						DBGPRINT("socks5 recv valid connect request");
+						switch(m->atyp)
+						{
+							case S5_ATYP_IP4:
+								ss.ss_family = AF_INET;
+								((struct sockaddr_in*)&ss)->sin_port = m->d4.port;
+								((struct sockaddr_in*)&ss)->sin_addr = m->d4.addr;
+								break;
+							case S5_ATYP_IP6:
+								ss.ss_family = AF_INET6;
+								((struct sockaddr_in6*)&ss)->sin6_port = m->d6.port;
+								((struct sockaddr_in6*)&ss)->sin6_addr = m->d6.addr;
+								((struct sockaddr_in6*)&ss)->sin6_flowinfo = 0;
+								((struct sockaddr_in6*)&ss)->sin6_scope_id = 0;
+								break;
+							case S5_ATYP_DOM:
+								// NOTE : resolving is blocking. do you want it really ?
+								{
+									struct addrinfo *ai,hints;
+									char *sdom;
+									int r;
+									uint16_t port;
+									char sport[6];
+
+									port=S5_PORT_FROM_DD(m,rd);
+									if (!port)
+									{
+										DBGPRINT("socks5 no port is given");
+										socks5_send_rep(conn->fd,S5_REP_HOST_UNREACHABLE);
+										return false;
+									}
+									snprintf(sport,sizeof(sport),"%u",port);
+									sdom = malloc(m->dd.len+1);
+									if (!sdom) return false;
+									memcpy(sdom,m->dd.domport,m->dd.len);
+									sdom[m->dd.len] = '\0';
+									DBGPRINT("socks5 resolving hostname '%s' port '%s'",sdom,sport);
+									memset(&hints, 0, sizeof(struct addrinfo));
+									hints.ai_socktype = SOCK_STREAM;
+									r=getaddrinfo(sdom,sport,&hints,&ai);
+									free(sdom);
+									if (r)
+									{
+										DBGPRINT("socks5 getaddrinfo error %d",r);
+										socks5_send_rep(conn->fd,S5_REP_HOST_UNREACHABLE);
+										return false;
+									}
+									if (params.debug)
+									{
+										printf("socks5 hostname resolved to :\n");
+										print_addrinfo(ai);
+									}
+									memcpy(&ss,ai->ai_addr,ai->ai_addrlen);
+									freeaddrinfo(ai);
+								}
+								break;
+							default:
+								return false; // should not be here. S5_REQ_CONNECT_VALID checks for valid atyp
+
+						}
+						return proxy_mode_connect_remote(&ss,conn,conn_list);
+					}
+					break;
+				case S_WAIT_CONNECTION:
+					DBGPRINT("socks received message while in S_WAIT_CONNECTION. hanging up");
+					break;
+			}
+			break;
+	}
+	return false;
+}
 
 #define RD_BLOCK_SIZE 65536
 #define MAX_WASTE (1024*1024)
-
-bool handle_epoll(tproxy_conn_t *conn, uint32_t evt)
+bool handle_epoll(tproxy_conn_t *conn, struct tailhead *conn_list, uint32_t evt)
 {
 	int numbytes;
 	ssize_t rd = 0, wr = 0;
@@ -611,6 +939,13 @@ bool handle_epoll(tproxy_conn_t *conn, uint32_t evt)
 
 	DBGPRINT("+handle_epoll");
 
+	if (!conn_in_tcp_mode(conn))
+	{
+		if (!(evt & EPOLLIN))
+			return true; // nothing to read
+		return handle_proxy_mode(conn,conn_list);
+	}
+
 	if (!handle_unsent(conn))
 		return false; // error
 	if (!conn_partner_alive(conn) && !conn_has_unsent(conn))
@@ -618,7 +953,7 @@ bool handle_epoll(tproxy_conn_t *conn, uint32_t evt)
 
 	if (!(evt & EPOLLIN))
 		return true; // nothing to read
-		
+
 	if (!conn_partner_alive(conn))
 	{
 		// throw it to a black hole
@@ -884,7 +1219,7 @@ int event_loop(int listen_fd)
 					close(tmp_fd);
 					fprintf(stderr, "Too many local legs : %d\n", legs_local);
 				}
-				else if (!(conn=add_tcp_connection(efd, &conn_list, tmp_fd, params.port)))
+				else if (!(conn=add_tcp_connection(efd, &conn_list, tmp_fd, params.port, params.proxy_type)))
 				{
 					// add_tcp_connection closes fd in case of failure
 					fprintf(stderr, "Failed to add connection\n");
@@ -893,7 +1228,7 @@ int event_loop(int listen_fd)
 				{
 					printf("Socket fd=%d (local) connected\n", conn->fd);
 					legs_local++;
-					legs_remote++;
+					legs_remote += params.proxy_type==CONN_TYPE_TRANSPARENT; // immediate remote connection only in transparent mode
 					print_legs(legs_local, legs_remote);
 				}
 			}
@@ -910,17 +1245,26 @@ int event_loop(int listen_fd)
 					{
 						if (events[i].events & EPOLLERR) DBGPRINT("EPOLLERR");
 						if (events[i].events & EPOLLHUP) DBGPRINT("EPOLLHUP");
+						proxy_remote_conn_ack(conn);
 						read_all_and_buffer(conn,3);
 						CONN_CLOSE_WITH_PARTNER_CHECK(conn);
 						continue;
 					}
 					if (events[i].events & EPOLLOUT)
 					{
-						if (!check_connection_attempt(conn, efd))
+						if (conn->remote && conn->state==CONN_UNAVAILABLE)
 						{
-							fprintf(stderr, "Connection attempt failed for fd=%d\n", conn->fd);
-							CONN_CLOSE_BOTH(conn);
-							continue;
+							if (!check_connection_attempt(conn, efd))
+							{
+								fprintf(stderr, "Connection attempt failed for fd=%d\n", conn->fd);
+								CONN_CLOSE_BOTH(conn);
+								continue;
+							}
+							if (conn->partner && conn->partner->conn_type!=CONN_TYPE_TRANSPARENT)
+							{
+								legs_remote++;
+								print_legs(legs_local, legs_remote);
+							}
 						}
 					}
 					if (events[i].events & EPOLLRDHUP)
@@ -945,7 +1289,7 @@ int event_loop(int listen_fd)
 					if (events[i].events & (EPOLLIN|EPOLLOUT))
 					{
 						// will not receive this until successful check_connection_attempt()
-						if (!handle_epoll(conn, events[i].events))
+						if (!handle_epoll(conn, &conn_list, events[i].events))
 						{
 							DBGPRINT("handle_epoll false");
 							CONN_CLOSE_WITH_PARTNER_CHECK(conn);
