@@ -1,5 +1,4 @@
 #!/bin/sh
-# get rublacklist and resolve it
 
 SCRIPT=$(readlink -f "$0")
 EXEDIR=$(dirname "$SCRIPT")
@@ -35,7 +34,6 @@ dig_reestr()
 }
 
 
-# assume all https banned by ip
 curl -k --fail --max-time 150 --connect-timeout 5 --retry 3 --max-filesize 125829120 "$ZURL_REESTR" -o "$ZREESTR" ||
 {
  echo reestr list download failed

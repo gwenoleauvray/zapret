@@ -1,5 +1,4 @@
 #!/bin/sh
-# get rublacklist and resolve it
 
 SCRIPT=$(readlink -f "$0")
 EXEDIR=$(dirname "$SCRIPT")

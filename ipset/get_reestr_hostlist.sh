@@ -1,5 +1,4 @@
 #!/bin/sh
-# get domain list. not IP
 
 SCRIPT=$(readlink -f "$0")
 EXEDIR=$(dirname "$SCRIPT")
