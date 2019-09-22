@@ -459,6 +459,7 @@ static bool get_dest_addr(int sockfd, struct sockaddr_storage *orig_dst)
 //Free resources occupied by this connection
 void free_conn(tproxy_conn_t *conn)
 {
+	if (!conn) return;
 	if (conn->fd) close(conn->fd);
 	if (conn->splice_pipe[0])
 	{
@@ -554,7 +555,7 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 {
 	struct sockaddr_storage orig_dst;
 	tproxy_conn_t *conn;
-	int remote_fd;
+	int remote_fd=0;
 	int yes=1;
 
 	if (proxy_type==CONN_TYPE_TRANSPARENT)
@@ -596,7 +597,7 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 	
 	if(!(conn = new_conn(local_fd, false)))
 	{
-		close(remote_fd);
+		if (remote_fd) close(remote_fd);
 		close(local_fd);
 		return NULL;
 	}
