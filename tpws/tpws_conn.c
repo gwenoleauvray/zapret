@@ -27,6 +27,22 @@
  #define IP6T_SO_ORIGINAL_DST 80
 #endif
 
+// keep separate legs counter. counting every time thousands of legs can consume cpu
+static int legs_local, legs_remote;
+void count_legs(struct tailhead *conn_list)
+{
+	tproxy_conn_t *conn = NULL;
+
+	legs_local = legs_remote = 0;
+	TAILQ_FOREACH(conn, conn_list, conn_ptrs)
+		conn->remote ? legs_remote++ : legs_local++;
+	
+}
+void print_legs()
+{
+	printf("Legs : local:%d remote:%d\n", legs_local, legs_remote);
+}
+
 
 bool socks5_send_rep(int fd,uint8_t rep)
 {
@@ -71,12 +87,10 @@ bool socks_send_rep(uint8_t ver, int fd, uint8_t rep5)
 {
 	return ver==5 ? socks5_send_rep(fd, rep5) : socks4_send_rep(fd, rep5 ? S4_REP_FAILED : S4_REP_OK);
 }
-
 bool socks_send_rep_errno(uint8_t ver, int fd, int errn)
 {
 	return ver==5 ? socks5_send_rep_errno(fd,errn) : socks4_send_rep_errno(fd, errn);
 }
-
 bool proxy_remote_conn_ack(tproxy_conn_t *conn)
 {
 	// if proxy mode acknowledge connection request
@@ -100,6 +114,7 @@ bool proxy_remote_conn_ack(tproxy_conn_t *conn)
 	}
 	return bres;
 }
+
 
 
 bool send_buffer_create(send_buffer_t *sb, char *data, size_t len)
@@ -279,21 +294,22 @@ bool check_local_ip(const struct sockaddr *saddr)
 {
 	struct ifaddrs *addrs,*a;
     
-	if (getifaddrs(&addrs)<0) return -1;
+	if (getifaddrs(&addrs)<0) return false;
 	a  = addrs;
 
+	bool bres=false;
 	while (a)
 	{
 		if (a->ifa_addr && sacmp(a->ifa_addr,saddr))
 		{
-			freeifaddrs(addrs);
-			return true;
+			bres=true;
+			break;
 		}
 		a = a->ifa_next;
 	}
 
 	freeifaddrs(addrs);
-	return false;
+	return bres;
 }
 void print_addrinfo(const struct addrinfo *ai)
 {
@@ -632,6 +648,7 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 	// want to get EPOLLIN-events, as I dont want to receive any data before
 	// remote connection is established
 	//Proxy mode : I need to service proxy protocol
+	// remote connection not started until proxy handshake is complete
 
 	if (!epoll_set(conn, proxy_type==CONN_TYPE_TRANSPARENT ? 0 : (EPOLLIN|EPOLLRDHUP)))
 	{
@@ -725,6 +742,7 @@ bool handle_unsent(tproxy_conn_t *conn)
 	return epoll_set_flow_pair(conn);
 }
 
+
 bool proxy_mode_connect_remote(const struct sockaddr_storage *ss, tproxy_conn_t *conn, struct tailhead *conn_list)
 {
 	int remote_fd;
@@ -763,6 +781,9 @@ bool proxy_mode_connect_remote(const struct sockaddr_storage *ss, tproxy_conn_t 
 		return false;
 	}
 	TAILQ_INSERT_HEAD(conn_list, conn->partner, conn_ptrs);
+//	legs_remote++;
+count_legs(conn_list);
+	print_legs();
 	DBGPRINT("socks connecting");
 	conn->socks_state = S_WAIT_CONNECTION;
 	return true;
@@ -1109,38 +1130,6 @@ bool read_all_and_buffer(tproxy_conn_t *conn, int buffer_number)
 	return false;
 }
 
-void count_legs(struct tailhead *conn_list, int *ct_local, int *ct_remote)
-{
-	tproxy_conn_t *conn = NULL;
-
-	if (ct_local) *ct_local = 0;
-	if (ct_remote) *ct_remote = 0;
-	TAILQ_FOREACH(conn, conn_list, conn_ptrs)
-	{
-		if (conn->remote)
-		{
-			if (ct_remote) (*ct_remote)++;
-		}
-		else
-		{
-			if (ct_local) (*ct_local)++;
-		}
-	}
-	
-}
-/*
-void print_legs(struct tailhead *conn_list)
-{
-	int legs_local,legs_remote;
-	count_legs(conn_list, &legs_local, &legs_remote);
-	printf("Legs : local:%d remote:%d\n", legs_local, legs_remote);
-}
-*/
-void print_legs(int legs_local,int legs_remote)
-{
-	printf("Legs : local:%d remote:%d\n", legs_local, legs_remote);
-}
-
 
 #define CONN_CLOSE(conn) { \
  if (conn->state!=CONN_CLOSED) close_tcp_conn(conn, &conn_list, &close_list); \
@@ -1164,8 +1153,8 @@ int event_loop(int listen_fd)
 	int efd, i;
 	struct epoll_event ev, events[MAX_EPOLL_EVENTS];
 	struct tailhead conn_list, close_list;
-	int legs_local = 0, legs_remote = 0;
 
+	legs_local = legs_remote = 0;
 	//Initialize queue (remember that TAILQ_HEAD just defines the struct)
 	TAILQ_INIT(&conn_list);
 	TAILQ_INIT(&close_list);
@@ -1226,10 +1215,10 @@ int event_loop(int listen_fd)
 				}
 				else
 				{
-					printf("Socket fd=%d (local) connected\n", conn->fd);
 					legs_local++;
 					legs_remote += params.proxy_type==CONN_TYPE_TRANSPARENT; // immediate remote connection only in transparent mode
-					print_legs(legs_local, legs_remote);
+					print_legs();
+					printf("Socket fd=%d (local) connected\n", conn->fd);
 				}
 			}
 			else
@@ -1252,19 +1241,11 @@ int event_loop(int listen_fd)
 					}
 					if (events[i].events & EPOLLOUT)
 					{
-						if (conn->remote && conn->state==CONN_UNAVAILABLE)
+						if (!check_connection_attempt(conn, efd))
 						{
-							if (!check_connection_attempt(conn, efd))
-							{
-								fprintf(stderr, "Connection attempt failed for fd=%d\n", conn->fd);
-								CONN_CLOSE_BOTH(conn);
-								continue;
-							}
-							if (conn->partner && conn->partner->conn_type!=CONN_TYPE_TRANSPARENT)
-							{
-								legs_remote++;
-								print_legs(legs_local, legs_remote);
-							}
+							fprintf(stderr, "Connection attempt failed for fd=%d\n", conn->fd);
+							CONN_CLOSE_BOTH(conn);
+							continue;
 						}
 					}
 					if (events[i].events & EPOLLRDHUP)
@@ -1304,8 +1285,8 @@ int event_loop(int listen_fd)
 		if (remove_closed_connections(efd, &close_list))
 		{
 			// at least one leg was removed. recount legs
-			count_legs(&conn_list, &legs_local, &legs_remote);
-			print_legs(legs_local, legs_remote);
+			count_legs(&conn_list);
+			print_legs();
 		}
 
 		fflush(stderr); fflush(stdout); // for console messages
