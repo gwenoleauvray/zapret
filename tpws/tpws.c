@@ -111,6 +111,7 @@ void exithelp()
 		" --bind-wait-ip=<sec>\t\t; after ifup wait for ip address to appear up to N seconds\n"
 		" --bind-wait-ip-linklocal=<sec>\t; accept only link locals first N seconds then any\n"
 		" --socks\t\t\t; implement socks4/5 proxy instead of transparent proxy\n"
+		" --no-resolve\t\t\t; disable socks5 remote dns ability (resolves are not async, they block all activity)\n"
 		" --local-rcvbuf=<bytes>\n"
 		" --local-sndbuf=<bytes>\n"
 		" --remote-rcvbuf=<bytes>\n"
@@ -197,6 +198,7 @@ void parse_params(int argc, char *argv[])
 		{ "remote-rcvbuf",required_argument,0,0 },// optidx=29
 		{ "remote-sndbuf",required_argument,0,0 },// optidx=30
 		{ "socks",no_argument,0,0 },// optidx=31
+		{ "no-resolve",no_argument,0,0 },// optidx=32
 		{ NULL,0,NULL,0 }
 	};
 	while ((v = getopt_long_only(argc, argv, "", long_options, &option_index)) != -1)
@@ -370,6 +372,9 @@ void parse_params(int argc, char *argv[])
 			break;
 		case 31: /* socks */
 			params.proxy_type = CONN_TYPE_SOCKS;
+			break;
+		case 32: /* no-resolve */
+			params.no_resolve = true;
 			break;
 		}
 	}

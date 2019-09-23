@@ -161,6 +161,7 @@ tpws is transparent proxy.
  --bind-wait-ip-linklocal=<sec> ; accept only link locals first N seconds then any
  --port=<port>
  --socks			; implement socks4/5 proxy instead of transparent proxy
+ --no-resolve			; disable socks5 remote dns
  --maxconn=<max_connections>
  --hostlist=<filename>          ; only act on host in the list (one host per line, subdomains auto apply)
  --split-http-req=method|host
@@ -191,6 +192,11 @@ In the general case, there is no single mechanism to hang oneself on an event of
 
 in socks proxy mode no additional system privileges are required
 connection to local IPs of the system where tpws runs are prohibited
+tpws supports remote dns resolving (curl : --socks5-hostname  firefox : socks_remote_dns=true) , but does it in blocking mode.
+tpws uses async sockets for all activity but resolving can break this model.
+if tpws serves many clients it can cause trouble. also DoS attack is possible against tpws.
+if remote resolving causes trouble configure clients to use local name resolution and use
+--no-resolve option on tpws side.
 
 Ways to get a list of blocked IP
 --------------------------------

@@ -895,11 +895,17 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 								// NOTE : resolving is blocking. do you want it really ?
 								{
 									struct addrinfo *ai,hints;
-									char *sdom;
+									char sdom[256];
 									int r;
 									uint16_t port;
 									char sport[6];
 
+									if (params.no_resolve)
+									{
+										printf("socks5 hostname resolving disabled\n");
+										socks5_send_rep(conn->fd,S5_REP_NOT_ALLOWED_BY_RULESET);
+										return false;
+									}
 									port=S5_PORT_FROM_DD(m,rd);
 									if (!port)
 									{
@@ -908,15 +914,12 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 										return false;
 									}
 									snprintf(sport,sizeof(sport),"%u",port);
-									sdom = malloc(m->dd.len+1);
-									if (!sdom) return false;
 									memcpy(sdom,m->dd.domport,m->dd.len);
 									sdom[m->dd.len] = '\0';
 									DBGPRINT("socks5 resolving hostname '%s' port '%s'",sdom,sport);
 									memset(&hints, 0, sizeof(struct addrinfo));
 									hints.ai_socktype = SOCK_STREAM;
 									r=getaddrinfo(sdom,sport,&hints,&ai);
-									free(sdom);
 									if (r)
 									{
 										DBGPRINT("socks5 getaddrinfo error %d",r);
