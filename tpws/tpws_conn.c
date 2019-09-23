@@ -781,8 +781,7 @@ bool proxy_mode_connect_remote(const struct sockaddr_storage *ss, tproxy_conn_t 
 		return false;
 	}
 	TAILQ_INSERT_HEAD(conn_list, conn->partner, conn_ptrs);
-//	legs_remote++;
-count_legs(conn_list);
+	legs_remote++;
 	print_legs();
 	DBGPRINT("socks connecting");
 	conn->socks_state = S_WAIT_CONNECTION;
