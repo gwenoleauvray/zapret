@@ -13,7 +13,8 @@ typedef struct
 	uint16_t port;
 	uint32_t ip;
 } s4_req;
-#define S4_REQ_CONNECT_VALID(r,l) (l>=sizeof(s4_req) && r->ver==4 && r->cmd==S4_CMD_CONNECT)
+#define S4_REQ_HEADER_VALID(r,l) (l>=sizeof(s4_req) && r->ver==4)
+#define S4_REQ_CONNECT_VALID(r,l) (S4_REQ_HEADER_VALID(r,l) && r->cmd==S4_CMD_CONNECT)
 
 #define S4_REP_OK		90
 #define S4_REP_FAILED		91

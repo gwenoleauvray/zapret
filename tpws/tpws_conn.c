@@ -657,7 +657,12 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 	}
 
 	TAILQ_INSERT_HEAD(conn_list, conn, conn_ptrs);
-	if (conn->partner) TAILQ_INSERT_HEAD(conn_list, conn->partner, conn_ptrs);
+	legs_local++;
+	if (conn->partner)
+	{
+		TAILQ_INSERT_HEAD(conn_list, conn->partner, conn_ptrs);
+		legs_remote++;
+	}
 	return conn;
 } 
 
@@ -847,9 +852,22 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 						// socks4 does not have separate handshake phase. it starts with connect request
 						// ipv6 and domain resolving are not supported
 						s4_req *m = (s4_req*)buf;
+						if (!S4_REQ_HEADER_VALID(m, rd))
+						{
+							DBGPRINT("socks4 request invalid");
+							return false;
+						}
+						if (m->cmd!=S4_CMD_CONNECT)
+						{
+							// BIND and UDP are not supported
+							printf("socks4 unsupported command %02X\n", m->cmd);
+							socks4_send_rep(conn->fd, S4_REP_FAILED);
+							return false;
+						}
 						if (!S4_REQ_CONNECT_VALID(m, rd))
 						{
 							DBGPRINT("socks4 connect request invalid");
+							socks4_send_rep(conn->fd, S4_REP_FAILED);
 							return false;
 						}
 						if (!m->port)
@@ -1101,6 +1119,7 @@ bool remove_closed_connections(int efd, struct tailhead *close_list)
 		epoll_del(conn);
 		printf("Socket fd=%d (partner_fd=%d, remote=%d) closed, connection removed. total_read=%zu total_write=%zu event_count=%d\n",
 			conn->fd, conn->partner ? conn->partner->fd : 0, conn->remote, conn->trd, conn->twr, conn->event_count);
+		if (conn->remote) legs_remote--; else legs_local--;
 		free_conn(conn);
 		bRemoved = true;
 	}
@@ -1228,8 +1247,6 @@ int event_loop(int listen_fd)
 				}
 				else
 				{
-					legs_local++;
-					legs_remote += params.proxy_type==CONN_TYPE_TRANSPARENT; // immediate remote connection only in transparent mode
 					print_legs();
 					printf("Socket fd=%d (local) connected\n", conn->fd);
 				}
@@ -1298,7 +1315,6 @@ int event_loop(int listen_fd)
 		if (remove_closed_connections(efd, &close_list))
 		{
 			// at least one leg was removed. recount legs
-			count_legs(&conn_list);
 			print_legs();
 		}
 
