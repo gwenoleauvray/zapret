@@ -330,21 +330,21 @@ void print_addrinfo(const struct addrinfo *ai)
 		ai = ai->ai_next;
 	}
 }
-void print_sockaddr_storage(const struct sockaddr_storage *ss)
+void print_sockaddr(const struct sockaddr *sa)
 {
 	char str[64];
-	switch (ss->ss_family)
+	switch (sa->sa_family)
 	{
 	case AF_INET:
-		if (inet_ntop(ss->ss_family, &((struct sockaddr_in*)ss)->sin_addr, str, sizeof(str)))
-			printf("%s:%d", str, ntohs(((struct sockaddr_in*)ss)->sin_port));
+		if (inet_ntop(sa->sa_family, &((struct sockaddr_in*)sa)->sin_addr, str, sizeof(str)))
+			printf("%s:%d", str, ntohs(((struct sockaddr_in*)sa)->sin_port));
 		break;
 	case AF_INET6:
-		if (inet_ntop(ss->ss_family, &((struct sockaddr_in6*)ss)->sin6_addr, str, sizeof(str)))
-			printf( "%s:%d", str, ntohs(((struct sockaddr_in6*)ss)->sin6_port));
+		if (inet_ntop(sa->sa_family, &((struct sockaddr_in6*)sa)->sin6_addr, str, sizeof(str)))
+			printf( "%s:%d", str, ntohs(((struct sockaddr_in6*)sa)->sin6_port));
 		break;
 	default:
-		printf("UNKNOWN_FAMILY_%d",ss->ss_family);
+		printf("UNKNOWN_FAMILY_%d",sa->sa_family);
 	}
 }
 
@@ -385,12 +385,12 @@ bool set_socket_buffers(int fd, int rcvbuf, int sndbuf)
 //Createas a socket and initiates the connection to the host specified by 
 //remote_addr.
 //Returns 0 if something fails, >0 on success (socket fd).
-static int connect_remote(const struct sockaddr_storage *remote_addr)
+static int connect_remote(const struct sockaddr *remote_addr)
 {
 	int remote_fd = 0, yes = 1;
     
 	//Use NONBLOCK to avoid slow connects affecting the performance of other connections
- 	if((remote_fd = socket(remote_addr->ss_family, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0){
+ 	if((remote_fd = socket(remote_addr->sa_family, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0){
 		perror("socket (connect_remote): ");
 		return 0;
 	}
@@ -416,8 +416,7 @@ static int connect_remote(const struct sockaddr_storage *remote_addr)
 		return 0;
 	}
 
-	if(connect(remote_fd, (struct sockaddr*) remote_addr, 
-		remote_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6)) < 0)
+	if(connect(remote_fd, remote_addr, remote_addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6)) < 0)
 	{
 		if(errno != EINPROGRESS)
 		{
@@ -603,7 +602,7 @@ tproxy_conn_t* add_tcp_connection(int efd, struct tailhead *conn_list,
 
 	if (proxy_type==CONN_TYPE_TRANSPARENT)
 	{
-		if(!(remote_fd = connect_remote(&orig_dst)))
+		if(!(remote_fd = connect_remote((struct sockaddr *)&orig_dst)))
 		{
 			fprintf(stderr, "Failed to connect\n");
 			close(local_fd);
@@ -743,21 +742,21 @@ bool handle_unsent(tproxy_conn_t *conn)
 }
 
 
-bool proxy_mode_connect_remote(const struct sockaddr_storage *ss, tproxy_conn_t *conn, struct tailhead *conn_list)
+bool proxy_mode_connect_remote(const struct sockaddr *sa, tproxy_conn_t *conn, struct tailhead *conn_list)
 {
 	int remote_fd;
 
 	printf("socks target for fd=%d is : ", conn->fd);
-	print_sockaddr_storage(ss);
+	print_sockaddr(sa);
 	printf("\n");
-	if (check_local_ip((struct sockaddr *)ss))
+	if (check_local_ip((struct sockaddr *)sa))
 	{
 		fprintf(stderr, "Dropping connection to local address for security reasons\n");
 		socks_send_rep(conn->socks_ver, conn->fd, S5_REP_NOT_ALLOWED_BY_RULESET);
 		return false;
 	}
 
-	if (!(remote_fd = connect_remote(ss)))
+	if (!(remote_fd = connect_remote(sa)))
 	{
 		fprintf(stderr, "socks failed to connect (1) errno=%d\n", errno);
 		socks_send_rep_errno(conn->socks_ver, conn->fd, errno);
@@ -862,7 +861,7 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 						ss.ss_family = AF_INET;
 						((struct sockaddr_in*)&ss)->sin_port = m->port;
 						((struct sockaddr_in*)&ss)->sin_addr.s_addr = m->ip;
-						return proxy_mode_connect_remote(&ss, conn, conn_list);
+						return proxy_mode_connect_remote((struct sockaddr *)&ss, conn, conn_list);
 					}
 					break;
 				case S_WAIT_REQUEST:
@@ -871,6 +870,18 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 						s5_req *m = (s5_req*)buf;
 						char str[64];
 
+						if (!S5_REQ_HEADER_VALID(m,rd))
+						{
+							DBGPRINT("socks5 request invalid");
+							return false;
+						}
+						if (m->cmd!=S5_CMD_CONNECT)
+						{
+							// BIND and UDP are not supported
+							printf("socks5 unsupported command %02X\n", m->cmd);
+							socks5_send_rep(conn->fd,S5_REP_COMMAND_NOT_SUPPORTED);
+							return false;
+						}
 						if (!S5_REQ_CONNECT_VALID(m,rd))
 						{
 							DBGPRINT("socks5 connect request invalid");
@@ -939,7 +950,7 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 								return false; // should not be here. S5_REQ_CONNECT_VALID checks for valid atyp
 
 						}
-						return proxy_mode_connect_remote(&ss,conn,conn_list);
+						return proxy_mode_connect_remote((struct sockaddr *)&ss,conn,conn_list);
 					}
 					break;
 				case S_WAIT_CONNECTION:

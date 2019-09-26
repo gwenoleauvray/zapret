@@ -64,8 +64,9 @@ typedef struct
 		} dd;
 	};
 } s5_req;
+#define S5_REQ_HEADER_VALID(r,l) (l>=4 && r->ver==5)
 #define S5_IP46_VALID(r,l) (r->atyp==S5_ATYP_IP4 && l>=(4+sizeof(r->d4)) || r->atyp==S5_ATYP_IP6 && l>=(4+sizeof(r->d6)))
-#define S5_REQ_CONNECT_VALID(r,l) (l>=4 && r->ver==5 && r->cmd==S5_CMD_CONNECT && (S5_IP46_VALID(r,l) || r->atyp==S5_ATYP_DOM && l>=5 && l>=(5+r->dd.len)))
+#define S5_REQ_CONNECT_VALID(r,l) (S5_REQ_HEADER_VALID(r,l) && r->cmd==S5_CMD_CONNECT && (S5_IP46_VALID(r,l) || r->atyp==S5_ATYP_DOM && l>=5 && l>=(5+r->dd.len)))
 #define S5_PORT_FROM_DD(r,l) (l>=(4+r->dd.len+2) ? ntohs(*(uint16_t*)(r->dd.domport+r->dd.len)) : 0)
 
 #define S5_REP_OK			0
@@ -87,7 +88,5 @@ typedef struct
 		} d4;
 	};
 } s5_rep;
-#define S5_REP_CONNECT_VALID(r,l) (l>=4 && r->ver==5 && S5_IP46_VALID(r,l))
-#define S5_REP_CONNECT_SUCCESS(r,l) (S5_REP_CONNECT_VALID(r,l) && r->rep==1)
 
 #pragma pack(pop)
