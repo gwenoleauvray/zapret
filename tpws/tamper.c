@@ -20,9 +20,12 @@ bool find_host(char **pHost,char *buf,size_t bs)
 {
 	if (!*pHost)
 	{
-		*pHost = find_bin(buf, bs, "\nHost: ", 7);
-		if (*pHost) (*pHost)++;
-		printf("Found Host: at pos %zu\n",*pHost - buf);
+		*pHost = find_bin(buf, bs, "\nHost:", 6);
+		if (*pHost)
+		{
+			(*pHost)++;
+			printf("Found Host: at pos %zu\n",*pHost - buf);
+		}
 	}
 	return !!*pHost;
 }
@@ -139,7 +142,7 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 					(*size)++; // block will grow by 1 byte
 				}
 			}
-			if (params.hostnospace && find_host(&pHost,segment,*size) && pHost[5] == ' ')
+			if (params.hostnospace && find_host(&pHost,segment,*size) && (pHost+5)<(segment+*size) && pHost[5] == ' ')
 			{
 				p = pHost + 6;
 				pos = p - segment;
@@ -147,19 +150,6 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 				memmove(p - 1, p, *size - pos);
 				(*size)--; // block will shrink by 1 byte
 				bRemovedHostSpace = 1;
-			}
-			if (!params.split_pos)
-			{
-				switch (params.split_http_req)
-				{
-				case split_method:
-					*split_pos = method_len - 1;
-					break;
-				case split_host:
-					if (find_host(&pHost,segment,*size))
-						*split_pos = pHost + 6 - bRemovedHostSpace - segment;
-					break;
-				}
 			}
 			if (params.hostcase && find_host(&pHost,segment,*size))
 			{
@@ -199,7 +189,7 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 						snprintf(s,sizeof(s),"%c%04x: ", 'a'+rand()%('z'-'a'+1), rand() & 0xFFFF);
 						memcpy(p,s,7);
 						p+=7;
-						memset(p,'0',padsize);
+						memset(p,'a'+rand()%('z'-'a'+1),padsize);
 						p+=padsize;
 						if (params.unixeol)
 							*p++='\n';
@@ -213,7 +203,20 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 					pHost = NULL; // invalidate
 				}
 			}
-			if (params.split_pos && params.split_pos < *size) *split_pos = params.split_pos;
+			if (!params.split_pos)
+			{
+				switch (params.split_http_req)
+				{
+				case split_method:
+					*split_pos = method_len - 1 + params.methodeol + (params.methodeol && !params.unixeol);
+					break;
+				case split_host:
+					if (find_host(&pHost,segment,*size))
+						*split_pos = pHost + 6 - bRemovedHostSpace - segment;
+					break;
+				}
+			}
+			else if (params.split_pos < *size) *split_pos = params.split_pos;
 		}
 		else
 		{
