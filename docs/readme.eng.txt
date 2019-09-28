@@ -171,6 +171,7 @@ tpws is transparent proxy.
  --hostdot                      ; add "." after Host: name
  --hosttab                      ; add tab after Host: name
  --hostnospace                  ; remove space after Host:
+ --hostpad=<bytes>		; add dummy padding headers before Host:
  --methodspace                  ; add extra space after method
  --methodeol                    ; add end-of-line before method
  --unixeol                      ; replace 0D0A to 0A

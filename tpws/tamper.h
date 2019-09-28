@@ -5,4 +5,4 @@
 
 char *find_bin(void *data, size_t len, const void *blk, size_t blk_len);
 bool find_host(char **pHost,char *buf,size_t bs);
-void modify_tcp_segment(char *segment,size_t *size,size_t *split_pos);
+void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,size_t *split_pos);

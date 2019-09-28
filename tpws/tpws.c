@@ -24,6 +24,7 @@
 #include <sys/capability.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+#include <time.h>
 
 #include "tpws.h"
 #include "tpws_conn.h"
@@ -132,6 +133,7 @@ void exithelp()
 		" --hostdot\t\t\t; add \".\" after Host: name\n"
 		" --hosttab\t\t\t; add tab after Host: name\n"
 		" --hostnospace\t\t\t; remove space after Host:\n"
+		" --hostpad=<bytes>\t\t; add dummy padding headers before Host:\n"
 		" --methodspace\t\t\t; add extra space after method\n"
 		" --methodeol\t\t\t; add end-of-line before method\n"
 		" --unixeol\t\t\t; replace 0D0A to 0A\n"
@@ -184,21 +186,22 @@ void parse_params(int argc, char *argv[])
 		{ "hostspell",required_argument,0,0 },// optidx=15
 		{ "hostdot",no_argument,0,0 },// optidx=16
 		{ "hostnospace",no_argument,0,0 },// optidx=17
-		{ "split-http-req",required_argument,0,0 },// optidx=18
-		{ "split-pos",required_argument,0,0 },// optidx=19
-		{ "methodspace",no_argument,0,0 },// optidx=20
-		{ "methodeol",no_argument,0,0 },// optidx=21
-		{ "hosttab",no_argument,0,0 },// optidx=22
-		{ "unixeol",no_argument,0,0 },// optidx=23
-		{ "hostlist",required_argument,0,0 },// optidx=24
-		{ "pidfile",required_argument,0,0 },// optidx=25
-		{ "debug",no_argument,0,0 },// optidx=26
-		{ "local-rcvbuf",required_argument,0,0 },// optidx=27
-		{ "local-sndbuf",required_argument,0,0 },// optidx=28
-		{ "remote-rcvbuf",required_argument,0,0 },// optidx=29
-		{ "remote-sndbuf",required_argument,0,0 },// optidx=30
-		{ "socks",no_argument,0,0 },// optidx=31
-		{ "no-resolve",no_argument,0,0 },// optidx=32
+		{ "hostpad",required_argument,0,0 },// optidx=18
+		{ "split-http-req",required_argument,0,0 },// optidx=19
+		{ "split-pos",required_argument,0,0 },// optidx=20
+		{ "methodspace",no_argument,0,0 },// optidx=21
+		{ "methodeol",no_argument,0,0 },// optidx=22
+		{ "hosttab",no_argument,0,0 },// optidx=23
+		{ "unixeol",no_argument,0,0 },// optidx=24
+		{ "hostlist",required_argument,0,0 },// optidx=25
+		{ "pidfile",required_argument,0,0 },// optidx=26
+		{ "debug",no_argument,0,0 },// optidx=27
+		{ "local-rcvbuf",required_argument,0,0 },// optidx=28
+		{ "local-sndbuf",required_argument,0,0 },// optidx=29
+		{ "remote-rcvbuf",required_argument,0,0 },// optidx=30
+		{ "remote-sndbuf",required_argument,0,0 },// optidx=31
+		{ "socks",no_argument,0,0 },// optidx=32
+		{ "no-resolve",no_argument,0,0 },// optidx=33
 		{ NULL,0,NULL,0 }
 	};
 	while ((v = getopt_long_only(argc, argv, "", long_options, &option_index)) != -1)
@@ -305,7 +308,11 @@ void parse_params(int argc, char *argv[])
 			params.hostnospace = true;
 			params.tamper = true;
 			break;
-		case 18: /* split-http-req */
+		case 18: /* hostpad */
+			params.hostpad = atoi(optarg);
+			params.tamper = true;
+			break;
+		case 19: /* split-http-req */
 			if (!strcmp(optarg, "method"))
 				params.split_http_req = split_method;
 			else if (!strcmp(optarg, "host"))
@@ -317,7 +324,7 @@ void parse_params(int argc, char *argv[])
 			}
 			params.tamper = true;
 			break;
-		case 19: /* split-pos */
+		case 20: /* split-pos */
 			i = atoi(optarg);
 			if (i)
 				params.split_pos = i;
@@ -328,52 +335,52 @@ void parse_params(int argc, char *argv[])
 			}
 			params.tamper = true;
 			break;
-		case 20: /* methodspace */
+		case 21: /* methodspace */
 			params.methodspace = true;
 			params.tamper = true;
 			break;
-		case 21: /* methodeol */
+		case 22: /* methodeol */
 			params.methodeol = true;
 			params.tamper = true;
 			break;
-		case 22: /* hosttab */
+		case 23: /* hosttab */
 			params.hosttab = true;
 			params.tamper = true;
 			break;
-		case 23: /* unixeol */
+		case 24: /* unixeol */
 			params.unixeol = true;
 			params.tamper = true;
 			break;
-		case 24: /* hostlist */
+		case 25: /* hostlist */
 			if (!LoadHostList(&params.hostlist, optarg))
 				exit_clean(1);
 			strncpy(params.hostfile,optarg,sizeof(params.hostfile));
 			params.hostfile[sizeof(params.hostfile)-1]='\0';
 			params.tamper = true;
 			break;
-		case 25: /* pidfile */
+		case 26: /* pidfile */
 			strncpy(params.pidfile,optarg,sizeof(params.pidfile));
 			params.pidfile[sizeof(params.pidfile)-1]='\0';
 			break;
-		case 26:
+		case 27:
 			params.debug = true;
 			break;
-		case 27: /* local-rcvbuf */
+		case 28: /* local-rcvbuf */
 			params.local_rcvbuf = atoi(optarg)/2;
 			break;
-		case 28: /* local-sndbuf */
+		case 29: /* local-sndbuf */
 			params.local_sndbuf = atoi(optarg)/2;
 			break;
-		case 29: /* remote-rcvbuf */
+		case 30: /* remote-rcvbuf */
 			params.remote_rcvbuf = atoi(optarg)/2;
 			break;
-		case 30: /* remote-sndbuf */
+		case 31: /* remote-sndbuf */
 			params.remote_sndbuf = atoi(optarg)/2;
 			break;
-		case 31: /* socks */
+		case 32: /* socks */
 			params.proxy_type = CONN_TYPE_SOCKS;
 			break;
-		case 32: /* no-resolve */
+		case 33: /* no-resolve */
 			params.no_resolve = true;
 			break;
 		}
@@ -603,6 +610,8 @@ int main(int argc, char *argv[]) {
 	struct sockaddr_storage salisten;
 	socklen_t salisten_len;
 	int ipv6_only=0,if_index=0;
+
+	srand(time(NULL));
 
 	parse_params(argc, argv);
 

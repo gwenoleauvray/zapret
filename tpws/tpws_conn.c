@@ -859,7 +859,7 @@ bool handle_proxy_mode(tproxy_conn_t *conn, struct tailhead *conn_list)
 						}
 						if (m->cmd!=S4_CMD_CONNECT)
 						{
-							// BIND and UDP are not supported
+							// BIND is not supported
 							printf("socks4 unsupported command %02X\n", m->cmd);
 							socks4_send_rep(conn->fd, S4_REP_FAILED);
 							return false;
@@ -1069,7 +1069,7 @@ bool handle_epoll(tproxy_conn_t *conn, struct tailhead *conn_list, uint32_t evt)
 				size_t split_pos=0;
 
 				bs = rd;
-				modify_tcp_segment(buf,&bs,&split_pos);
+				modify_tcp_segment(buf,sizeof(buf),&bs,&split_pos);
 
 				if (split_pos)
 				{

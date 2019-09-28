@@ -28,7 +28,7 @@ bool find_host(char **pHost,char *buf,size_t bs)
 }
 
 static const char *http_methods[] = { "GET /","POST /","HEAD /","OPTIONS /","PUT /","DELETE /","CONNECT /","TRACE /",NULL };
-void modify_tcp_segment(char *segment,size_t *size,size_t *split_pos)
+void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,size_t *split_pos)
 {
 	char *p, *pp, *pHost = NULL;
 	size_t method_len = 0, pos;
@@ -56,7 +56,7 @@ void modify_tcp_segment(char *segment,size_t *size,size_t *split_pos)
 		if (params.hostlist && find_host(&pHost,segment,*size))
 		{
 			bool bInHostList = false;
-			p = pHost + 6;
+			p = pHost + 5;
 			while (p < (segment + *size) && (*p == ' ' || *p == '\t')) p++;
 			pp = p;
 			while (pp < (segment + *size) && (pp - p) < (sizeof(Host) - 1) && *pp != '\r' && *pp != '\n') pp++;
@@ -95,8 +95,27 @@ void modify_tcp_segment(char *segment,size_t *size,size_t *split_pos)
 				}
 				pHost = NULL; // invalidate
 			}
-
-			if (params.methodspace)
+			if (params.methodeol && (*size+1+!params.unixeol)<=segment_buffer_size)
+			{
+				printf("Adding EOL before method\n");
+				if (params.unixeol)
+				{
+					memmove(segment + 1, segment, *size);
+					(*size)++;;
+					segment[0] = '\n';
+					if (*split_pos) (*split_pos)++;
+				}
+				else
+				{
+					memmove(segment + 2, segment, *size);
+					*size += 2;
+					segment[0] = '\r';
+					segment[1] = '\n';
+					if (*split_pos) *split_pos += 2;
+				}
+				pHost = NULL; // invalidate
+			}
+			if (params.methodspace && *size<segment_buffer_size)
 			{
 				// we only work with data blocks looking as HTTP query, so method is at the beginning
 				printf("Adding extra space after method\n");
@@ -107,9 +126,9 @@ void modify_tcp_segment(char *segment,size_t *size,size_t *split_pos)
 				(*size)++; // block will grow by 1 byte
 				if (pHost) pHost++; // Host: position will move by 1 byte
 			}
-			if ((params.hostdot || params.hosttab) && find_host(&pHost,segment,*size))
+			if ((params.hostdot || params.hosttab) && *size<segment_buffer_size && find_host(&pHost,segment,*size))
 			{
-				p = pHost + 6;
+				p = pHost + 5;
 				while (p < (segment + *size) && *p != '\r' && *p != '\n') p++;
 				if (p < (segment + *size))
 				{
@@ -147,23 +166,51 @@ void modify_tcp_segment(char *segment,size_t *size,size_t *split_pos)
 				printf("Changing 'Host:' => '%c%c%c%c:' at pos %zu\n", params.hostspell[0], params.hostspell[1], params.hostspell[2], params.hostspell[3], pHost - segment);
 				memcpy(pHost, params.hostspell, 4);
 			}
-			if (params.methodeol)
+			if (params.hostpad && find_host(&pHost,segment,*size))
 			{
-				printf("Adding EOL before method\n");
-				if (params.unixeol)
-				{
-					memmove(segment + 1, segment, *size);
-					(*size)++;;
-					segment[0] = '\n';
-					if (*split_pos) (*split_pos)++;
-				}
+				//  add :  XXXXX: <padding?[\r\n|\n]
+				char s[8];
+				size_t hsize = params.unixeol ? 8 : 9;
+				size_t hostpad = params.hostpad<hsize ? hsize : params.hostpad;
+
+				if ((hsize+*size)>segment_buffer_size)
+					printf("could not add host padding : buffer too small\n");
 				else
 				{
-					memmove(segment + 2, segment, *size);
-					*size += 2;
-					segment[0] = '\r';
-					segment[1] = '\n';
-					if (*split_pos) *split_pos += 2;
+					if ((hostpad+*size)>segment_buffer_size)
+					{
+						hostpad=segment_buffer_size-*size;
+						printf("host padding reduced to %zu bytes : buffer too small\n", hostpad);
+					}
+					else
+						printf("host padding with %zu bytes\n", hostpad);
+					
+					p = pHost;
+					pos = p - segment;
+					memmove(p + hostpad, p, *size - pos);
+					(*size) += hostpad;
+					while(hostpad)
+					{
+						#define MAX_HDR_SIZE	2048
+						size_t padsize = hostpad > hsize ? hostpad-hsize : 0;
+						if (padsize>MAX_HDR_SIZE) padsize=MAX_HDR_SIZE;
+						// if next header would be too small then add extra padding to the current one
+						if ((hostpad-padsize-hsize)<hsize) padsize+=hostpad-padsize-hsize;
+						snprintf(s,sizeof(s),"%c%04x: ", 'a'+rand()%('z'-'a'+1), rand() & 0xFFFF);
+						memcpy(p,s,7);
+						p+=7;
+						memset(p,'0',padsize);
+						p+=padsize;
+						if (params.unixeol)
+							*p++='\n';
+						else
+						{
+							*p++='\r';
+							*p++='\n';
+						}
+						hostpad-=hsize+padsize;
+					}
+					pHost = NULL; // invalidate
 				}
 			}
 			if (params.split_pos && params.split_pos < *size) *split_pos = params.split_pos;

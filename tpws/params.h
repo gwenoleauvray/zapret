@@ -24,6 +24,7 @@ struct params_s
 
 	bool tamper; // any tamper option is set
 	bool hostcase, hostdot, hosttab, hostnospace, methodspace, methodeol, unixeol;
+	int hostpad;
 	char hostspell[4];
 	enum splithttpreq split_http_req;
 	int split_pos;

@@ -201,6 +201,7 @@ tpws - это transparent proxy.
  --hostdot		; добавление точки после имени хоста : "Host: kinozal.tv."
  --hosttab		; добавление табуляции после имени хоста : "Host: kinozal.tv\t"
  --hostnospace		; убрать пробел после "Host:"
+ --hostpad=<bytes>	; добавить паддинг-хедеров общей длиной <bytes> перед Host:
  --methodspace		; добавить пробел после метода : "GET /" => "GET  /"
  --methodeol		; добавить перевод строки перед методом  : "GET /" => "\r\nGET  /"
  --unixeol		; конвертировать 0D0A в 0A и использовать везде 0A
