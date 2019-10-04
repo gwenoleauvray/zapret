@@ -119,10 +119,13 @@ create_ipset()
 # ipset seem to buffer the whole script to memory
 # on low RAM system this can cause oom errors
 # in SAVERAM mode we feed script lines in portions starting from the end, while truncating source file to free /tmp space
-RAMSIZE=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+# only /tmp is considered tmpfs. other locations mean tmpdir was redirected to a disk
 SAVERAM=0
-[ "$RAMSIZE" -lt "110000" ] && SAVERAM=1
-
+[ "$TMPDIR" = "/tmp" ] && {
+ RAMSIZE=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+ [ "$RAMSIZE" -lt "110000" ] && SAVERAM=1
+}
+ 
 [ "$DISABLE_IPV4" != "1" ] && {
   create_ipset 4 hash:ip $ZIPSET "$ZIPLIST" "$ZIPLIST_USER" "$ZIPLIST_EXCLUDE"
   create_ipset 4 hash:ip $ZIPSET_IPBAN "$ZIPLIST_IPBAN" "$ZIPLIST_USER_IPBAN" "$ZIPLIST_EXCLUDE"
