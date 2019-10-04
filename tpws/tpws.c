@@ -117,6 +117,7 @@ void exithelp()
 		" --local-sndbuf=<bytes>\n"
 		" --remote-rcvbuf=<bytes>\n"
 		" --remote-sndbuf=<bytes>\n"
+		" --skip-nodelay\t\t\t; do not set TCP_NODELAY option for outgoing connections (incompatible with split options)\n"
 		" --port=<port>\n"
 		" --maxconn=<max_connections>\n"
 		" --daemon\t\t\t; daemonize\n"
@@ -202,6 +203,7 @@ void parse_params(int argc, char *argv[])
 		{ "remote-sndbuf",required_argument,0,0 },// optidx=31
 		{ "socks",no_argument,0,0 },// optidx=32
 		{ "no-resolve",no_argument,0,0 },// optidx=33
+		{ "skip-nodelay",no_argument,0,0 },// optidx=34
 		{ NULL,0,NULL,0 }
 	};
 	while ((v = getopt_long_only(argc, argv, "", long_options, &option_index)) != -1)
@@ -383,11 +385,19 @@ void parse_params(int argc, char *argv[])
 		case 33: /* no-resolve */
 			params.no_resolve = true;
 			break;
+		case 34: /* skip-nodelay */
+			params.skip_nodelay = true;
+			break;
 		}
 	}
 	if (!params.port)
 	{
 		fprintf(stderr, "Need port number\n");
+		exit_clean(1);
+	}
+	if (params.skip_nodelay && (params.split_http_req || params.split_pos))
+	{
+		fprintf(stderr, "Cannot split with --skip-nodelay\n");
 		exit_clean(1);
 	}
 }

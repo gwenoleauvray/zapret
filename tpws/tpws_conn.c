@@ -387,7 +387,7 @@ bool set_socket_buffers(int fd, int rcvbuf, int sndbuf)
 //Returns 0 if something fails, >0 on success (socket fd).
 static int connect_remote(const struct sockaddr *remote_addr)
 {
-	int remote_fd = 0, yes = 1;
+	int remote_fd = 0, yes = 1, no = 0;
     
 	//Use NONBLOCK to avoid slow connects affecting the performance of other connections
  	if((remote_fd = socket(remote_addr->sa_family, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0){
@@ -409,13 +409,12 @@ static int connect_remote(const struct sockaddr *remote_addr)
 		close(remote_fd);
 		return 0;
 	}
-	if (setsockopt(remote_fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) <0)
+	if (setsockopt(remote_fd, IPPROTO_TCP, TCP_NODELAY, params.skip_nodelay ? &no : &yes, sizeof(int)) <0)
 	{
 		perror("setsockopt (SO_NODELAY, connect_remote): ");
 		close(remote_fd);
 		return 0;
 	}
-
 	if(connect(remote_fd, remote_addr, remote_addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6)) < 0)
 	{
 		if(errno != EINPROGRESS)

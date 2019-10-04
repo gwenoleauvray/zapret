@@ -193,6 +193,7 @@ tpws - это transparent proxy.
  --local-sndbuf=<bytes>
  --remote-rcvbuf=<bytes>
  --remote-sndbuf=<bytes>
+ --skip-nodelay		; не устанавливать в исходящих соединения TCP_NODELAY. несовместимо со split.
 
  --split-http-req=method|host	; способ разделения http запросов на сегменты : около метода (GET,POST) или около заголовка Host
  --split-pos=<offset>	; делить все посылы на сегменты в указанной позиции. Если отсыл длинее 8Kb (размер буфера приема), то будет разделен каждый блок по 8Kb.

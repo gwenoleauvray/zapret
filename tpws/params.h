@@ -15,6 +15,7 @@ struct params_s
 	int bind_wait_ifup,bind_wait_ip,bind_wait_ip_ll;
 	uint8_t proxy_type;
 	bool no_resolve;
+	bool skip_nodelay;
 	uid_t uid;
 	gid_t gid;
 	bool daemon;
