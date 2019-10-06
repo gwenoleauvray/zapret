@@ -3,7 +3,7 @@
 English
 -------
 
-For english version refer to readme.eng.txt
+For english version refer to docs/readme.eng.txt
 
 Для чего это надо
 -----------------
