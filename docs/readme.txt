@@ -1,5 +1,10 @@
 ﻿zapret v.28
 
+English
+-------
+
+For english version refer to readme.eng.txt
+
 Для чего это надо
 -----------------
 
@@ -189,10 +194,10 @@ tpws - это transparent proxy.
  --socks		; вместо прозрачного прокси реализовать socks4/5 proxy
  --no-resolve		; запретить ресолвинг имен через socks5
  --port=<port>		; на каком порту слушать
- --local-rcvbuf=<bytes>
- --local-sndbuf=<bytes>
- --remote-rcvbuf=<bytes>
- --remote-sndbuf=<bytes>
+ --local-rcvbuf=<bytes> ; SO_RCVBUF для соединений client-proxy
+ --local-sndbuf=<bytes> ; SO_SNDBUF для соединений client-proxy
+ --remote-rcvbuf=<bytes> ; SO_RCVBUF для соединений proxy-target
+ --remote-sndbuf=<bytes> ; SO_SNDBUF для соединений proxy-target
  --skip-nodelay		; не устанавливать в исходящих соединения TCP_NODELAY. несовместимо со split.
 
  --split-http-req=method|host	; способ разделения http запросов на сегменты : около метода (GET,POST) или около заголовка Host
