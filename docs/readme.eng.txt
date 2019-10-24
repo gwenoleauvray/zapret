@@ -352,6 +352,28 @@ After installation remove /tmp/zapret to free RAM.
 The absolute minimum for openwrt is 64/8 system, 64/16 is comfortable, 128/extroot is recommended.
 
 
+Android
+-------
+
+Its not possible to use transparent proxy without root privileges.
+Without root tpws can run in --socks mode.
+
+There're no NFQUEUE or ipset support in a stock android kernel, but DNAT is present for sure.
+
+Android does not use /etc/passwd, tpws --user won't work. There's replacement.
+Use numeric uids in --uid option.
+Its recommended to use gid 3003 (AID_INET), otherwise tpws will not have inet access.
+Example : --uid 1:3003
+
+Write your own shell script with iptables and tpws, run it using your root manager.
+Autorun scripts are here :
+magisk  : /data/adb/service.d
+supersu : /system/su.d
+
+I haven't checked whether android can kill iptable rules at its own will during wifi connection/disconnection,
+mobile data on/off, ...
+
+
 Https blocking bypass
 ----------------------
 
