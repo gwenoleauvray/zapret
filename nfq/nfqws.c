@@ -1,14 +1,11 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <netinet/ip.h>
-#include <netinet/ip6.h>
-#include <linux/tcp.h>
-//#include <netinet/in.h>
-#include <linux/types.h>
-#include <linux/netfilter.h>		/* for NF_ACCEPT */
+#include <stdint.h>
+#include <arpa/inet.h>
 #include <libnetfilter_queue/libnetfilter_queue.h>
 #include <getopt.h>
 #include <fcntl.h>
@@ -16,70 +13,151 @@
 #include <sys/capability.h>
 #include <sys/prctl.h>
 #include <errno.h>
+#include <time.h>
+#include "darkmagic.h"
 
-bool proto_check_ipv4(unsigned char *data,int len)
+#define NF_DROP 0
+#define NF_ACCEPT 1
+
+#define DPI_DESYNC_FWMARK_DEFAULT 0x40000000
+
+
+static const char fake_http_request[] = "GET / HTTP/1.1\r\nHost: www.w3.org\r\n"
+                                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:70.0) Gecko/20100101 Firefox/70.0\r\n"
+					"Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n"
+                                        "Accept-Encoding: gzip, deflate\r\n\r\n";
+static const uint8_t fake_https_request[] = {
+    0x16, 0x03, 0x01, 0x02, 0x00, 0x01, 0x00, 0x01, 0xfc, 0x03, 0x03, 0x9a, 0x8f, 0xa7, 0x6a, 0x5d,
+    0x57, 0xf3, 0x62, 0x19, 0xbe, 0x46, 0x82, 0x45, 0xe2, 0x59, 0x5c, 0xb4, 0x48, 0x31, 0x12, 0x15,
+    0x14, 0x79, 0x2c, 0xaa, 0xcd, 0xea, 0xda, 0xf0, 0xe1, 0xfd, 0xbb, 0x20, 0xf4, 0x83, 0x2a, 0x94,
+    0xf1, 0x48, 0x3b, 0x9d, 0xb6, 0x74, 0xba, 0x3c, 0x81, 0x63, 0xbc, 0x18, 0xcc, 0x14, 0x45, 0x57,
+    0x6c, 0x80, 0xf9, 0x25, 0xcf, 0x9c, 0x86, 0x60, 0x50, 0x31, 0x2e, 0xe9, 0x00, 0x22, 0x13, 0x01,
+    0x13, 0x03, 0x13, 0x02, 0xc0, 0x2b, 0xc0, 0x2f, 0xcc, 0xa9, 0xcc, 0xa8, 0xc0, 0x2c, 0xc0, 0x30,
+    0xc0, 0x0a, 0xc0, 0x09, 0xc0, 0x13, 0xc0, 0x14, 0x00, 0x33, 0x00, 0x39, 0x00, 0x2f, 0x00, 0x35,
+    0x01, 0x00, 0x01, 0x91, 0x00, 0x00, 0x00, 0x0f, 0x00, 0x0d, 0x00, 0x00, 0x0a, 0x77, 0x77, 0x77,
+    0x2e, 0x77, 0x33, 0x2e, 0x6f, 0x72, 0x67, 0x00, 0x17, 0x00, 0x00, 0xff, 0x01, 0x00, 0x01, 0x00,
+    0x00, 0x0a, 0x00, 0x0e, 0x00, 0x0c, 0x00, 0x1d, 0x00, 0x17, 0x00, 0x18, 0x00, 0x19, 0x01, 0x00,
+    0x01, 0x01, 0x00, 0x0b, 0x00, 0x02, 0x01, 0x00, 0x00, 0x23, 0x00, 0x00, 0x00, 0x10, 0x00, 0x0e,
+    0x00, 0x0c, 0x02, 0x68, 0x32, 0x08, 0x68, 0x74, 0x74, 0x70, 0x2f, 0x31, 0x2e, 0x31, 0x00, 0x05,
+    0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x33, 0x00, 0x6b, 0x00, 0x69, 0x00, 0x1d, 0x00,
+    0x20, 0xb0, 0xe4, 0xda, 0x34, 0xb4, 0x29, 0x8d, 0xd3, 0x5c, 0x70, 0xd3, 0xbe, 0xe8, 0xa7, 0x2a,
+    0x6b, 0xe4, 0x11, 0x19, 0x8b, 0x18, 0x9d, 0x83, 0x9a, 0x49, 0x7c, 0x83, 0x7f, 0xa9, 0x03, 0x8c,
+    0x3c, 0x00, 0x17, 0x00, 0x41, 0x04, 0x4c, 0x04, 0xa4, 0x71, 0x4c, 0x49, 0x75, 0x55, 0xd1, 0x18,
+    0x1e, 0x22, 0x62, 0x19, 0x53, 0x00, 0xde, 0x74, 0x2f, 0xb3, 0xde, 0x13, 0x54, 0xe6, 0x78, 0x07,
+    0x94, 0x55, 0x0e, 0xb2, 0x6c, 0xb0, 0x03, 0xee, 0x79, 0xa9, 0x96, 0x1e, 0x0e, 0x98, 0x17, 0x78,
+    0x24, 0x44, 0x0c, 0x88, 0x80, 0x06, 0x8b, 0xd4, 0x80, 0xbf, 0x67, 0x7c, 0x37, 0x6a, 0x5b, 0x46,
+    0x4c, 0xa7, 0x98, 0x6f, 0xb9, 0x22, 0x00, 0x2b, 0x00, 0x09, 0x08, 0x03, 0x04, 0x03, 0x03, 0x03,
+    0x02, 0x03, 0x01, 0x00, 0x0d, 0x00, 0x18, 0x00, 0x16, 0x04, 0x03, 0x05, 0x03, 0x06, 0x03, 0x08,
+    0x04, 0x08, 0x05, 0x08, 0x06, 0x04, 0x01, 0x05, 0x01, 0x06, 0x01, 0x02, 0x03, 0x02, 0x01, 0x00,
+    0x2d, 0x00, 0x02, 0x01, 0x01, 0x00, 0x1c, 0x00, 0x02, 0x40, 0x01, 0x00, 0x15, 0x00, 0x96, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+
+static uint8_t *find_bin(unsigned char *data, size_t len, const void *blk, size_t blk_len)
 {
-	return 	len>=20 && (data[0] & 0xF0)==0x40 &&
-		len>=((data[0] & 0x0F)<<2);
+	while (len >= blk_len)
+	{
+		if (!memcmp(data, blk, blk_len))
+			return data;
+		data++;
+		len--;
+	}
+	return NULL;
+}
+
+
+static void print_sockaddr(const struct sockaddr *sa)
+{
+	char str[64];
+	switch (sa->sa_family)
+	{
+	case AF_INET:
+		if (inet_ntop(sa->sa_family, &((struct sockaddr_in*)sa)->sin_addr, str, sizeof(str)))
+			printf("%s:%d", str, ntohs(((struct sockaddr_in*)sa)->sin_port));
+		break;
+	case AF_INET6:
+		if (inet_ntop(sa->sa_family, &((struct sockaddr_in6*)sa)->sin6_addr, str, sizeof(str)))
+			printf("%s:%d", str, ntohs(((struct sockaddr_in6*)sa)->sin6_port));
+		break;
+	default:
+		printf("UNKNOWN_FAMILY_%d", sa->sa_family);
+	}
+}
+
+
+static bool proto_check_ipv4(uint8_t *data, size_t len)
+{
+	return 	len >= 20 && (data[0] & 0xF0) == 0x40 &&
+		len >= ((data[0] & 0x0F) << 2);
 }
 // move to transport protocol
-void proto_skip_ipv4(unsigned char **data,int *len)
+static void proto_skip_ipv4(uint8_t **data, size_t *len)
 {
-	int l;
-	
-	l = (**data & 0x0F)<<2;
+	size_t l;
+
+	l = (**data & 0x0F) << 2;
 	*data += l;
 	*len -= l;
 }
-bool proto_check_tcp(unsigned char *data,int len)
+static bool proto_check_tcp(uint8_t *data, size_t len)
 {
-	return	len>=20 && len>=((data[12] & 0xF0)>>2);
+	return	len >= 20 && len >= ((data[12] & 0xF0) >> 2);
 }
-void proto_skip_tcp(unsigned char **data,int *len)
+static void proto_skip_tcp(uint8_t **data, size_t *len)
 {
-	int l;
-	l = ((*data)[12] & 0xF0)>>2;
+	size_t l;
+	l = ((*data)[12] & 0xF0) >> 2;
 	*data += l;
 	*len -= l;
 }
 
-bool proto_check_ipv6(unsigned char *data,int len)
+static bool proto_check_ipv6(uint8_t *data, size_t len)
 {
-	return 	len>=40 && (data[0] & 0xF0)==0x60 &&
-		(len-40)>=htons(*(uint16_t*)(data+4)); // payload length
+	return 	len >= 40 && (data[0] & 0xF0) == 0x60 &&
+		(len - 40) >= htons(*(uint16_t*)(data + 4)); // payload length
 }
 // move to transport protocol
 // proto_type = 0 => error
-void proto_skip_ipv6(unsigned char **data,int *len,uint8_t *proto_type)
+static void proto_skip_ipv6(uint8_t **data, size_t *len, uint8_t *proto_type)
 {
-	int hdrlen;
+	size_t hdrlen;
 	uint8_t HeaderType;
-	
+
 	*proto_type = 0; // put error in advance
-	
+
 	HeaderType = (*data)[6]; // NextHeader field
 	*data += 40; *len -= 40; // skip ipv6 base header
-	while(*len>0) // need at least one byte for NextHeader field
+	while (*len > 0) // need at least one byte for NextHeader field
 	{
-		switch(HeaderType)
+		switch (HeaderType)
 		{
-			case 0: // Hop-by-Hop Options
-			case 60: // Destination Options
-			case 43: // routing
-				if (*len<2) return; // error
-				hdrlen = 8+((*data)[1]<<3);
-				break;
-			case 44: // fragment
-				hdrlen = 8;
-				break;
-			case 59: // no next header
-				return; // error
-			default:
-				// we found some meaningful payload. it can be tcp, udp, icmp or some another exotic shit
-				*proto_type = HeaderType;
-				return;
+		case 0: // Hop-by-Hop Options
+		case 60: // Destination Options
+		case 43: // routing
+			if (*len < 2) return; // error
+			hdrlen = 8 + ((*data)[1] << 3);
+			break;
+		case 44: // fragment
+			hdrlen = 8;
+			break;
+		case 59: // no next header
+			return; // error
+		default:
+			// we found some meaningful payload. it can be tcp, udp, icmp or some another exotic shit
+			*proto_type = HeaderType;
+			return;
 		}
-		if (*len<hdrlen) return; // error
+		if (*len < hdrlen) return; // error
 		HeaderType = **data;
 		// advance to the next header location
 		*len -= hdrlen;
@@ -88,19 +166,7 @@ void proto_skip_ipv6(unsigned char **data,int *len,uint8_t *proto_type)
 	// we have garbage
 }
 
-unsigned char *find_bin(unsigned char *data,int len,const void *blk,int blk_len)
-{
-	while (len>=blk_len)
-	{
-		if (!memcmp(data,blk,blk_len))
-			return data;
-		data++;
-		len--;
-	}
-	return NULL;
-}
-
-static inline bool tcp_synack_segment( const struct tcphdr *tcphdr )
+static inline bool tcp_synack_segment(const struct tcphdr *tcphdr)
 {
 	/* check for set bits in TCP hdr */
 	return  tcphdr->urg == 0 &&
@@ -110,185 +176,113 @@ static inline bool tcp_synack_segment( const struct tcphdr *tcphdr )
 		tcphdr->syn == 1 &&
 		tcphdr->fin == 0;
 }
-
-uint16_t tcp_checksum(const void *buff, int len, in_addr_t src_addr, in_addr_t dest_addr)
+static inline bool tcp_ack_segment(const struct tcphdr *tcphdr)
 {
-	const uint16_t *buf=buff;
-	uint16_t *ip_src=(uint16_t *)&src_addr, *ip_dst=(uint16_t *)&dest_addr;
-	uint32_t sum;
-	int length=len;
-
-	// Calculate the sum
-	sum = 0;
-	while (len > 1)
-	{
-		sum += *buf++;
-		if (sum & 0x80000000)
-			sum = (sum & 0xFFFF) + (sum >> 16);
-		len -= 2;
-	}
-	if ( len & 1 )
-	{
-		// Add the padding if the packet lenght is odd
-		uint16_t v=0;
-		*(uint8_t *)&v = *((uint8_t *)buf);
-		sum += v;
-	}
-		
-	// Add the pseudo-header
-	sum += *(ip_src++);
-	sum += *ip_src;
-	sum += *(ip_dst++);
-	sum += *ip_dst;
-	sum += htons(IPPROTO_TCP);
-	sum += htons(length);
-	
-	// Add the carries
-	while (sum >> 16)
-		sum = (sum & 0xFFFF) + (sum >> 16);
-
-	// Return the one's complement of sum
-	return (uint16_t)(~sum);
-}
-void tcp_fix_checksum(struct tcphdr *tcp,int len, in_addr_t src_addr, in_addr_t dest_addr)
-{
-	tcp->check = 0;
-	tcp->check = tcp_checksum(tcp,len,src_addr,dest_addr);
-}
-uint16_t tcp6_checksum(const void *buff, int len, const struct in6_addr *src_addr, const struct in6_addr *dest_addr)
-{
-	const uint16_t *buf=buff;
-	const uint16_t *ip_src=(uint16_t *)src_addr, *ip_dst=(uint16_t *)dest_addr;
-	uint32_t sum;
-	int length=len;
-	
-	// Calculate the sum
-	sum = 0;
-	while (len > 1)
-	{
-		sum += *buf++;
-		if (sum & 0x80000000)
-			sum = (sum & 0xFFFF) + (sum >> 16);
-		len -= 2;
-	}
-	if ( len & 1 )
-	{
-		// Add the padding if the packet lenght is odd
-		uint16_t v=0;
-		*(uint8_t *)&v = *((uint8_t *)buf);
-		sum += v;
-	}
-	
-	// Add the pseudo-header
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *(ip_src++);
-	sum += *ip_src;
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *(ip_dst++);
-	sum += *ip_dst;
-	sum += htons(IPPROTO_TCP);
-	sum += htons(length);
-	
-	// Add the carries
-	while (sum >> 16)
-		sum = (sum & 0xFFFF) + (sum >> 16);
-
-	// Return the one's complement of sum
-	return (uint16_t)(~sum);
-}
-void tcp6_fix_checksum(struct tcphdr *tcp,int len, const struct in6_addr *src_addr, const struct in6_addr *dest_addr)
-{
-	tcp->check = 0;
-	tcp->check = tcp6_checksum(tcp,len,src_addr,dest_addr);
+	/* check for set bits in TCP hdr */
+	return  tcphdr->urg == 0 &&
+		tcphdr->ack == 1 &&
+		tcphdr->rst == 0 &&
+		tcphdr->syn == 0 &&
+		tcphdr->fin == 0;
 }
 
-void tcp_rewrite_winsize(struct tcphdr *tcp,uint16_t winsize)
-{
-    unsigned int winsize_old;
-/*
-    unsigned char scale_factor=1;
-    int optlen = (tcp->doff << 2);
-    unsigned char *opt = (unsigned char*)(tcp+1);
 
-    optlen = optlen>sizeof(struct tcphdr) ? optlen-sizeof(struct tcphdr) : 0;
-    printf("optslen=%d\n",optlen);
-    while (optlen)
-    {
-	switch(*opt)
-	{
-	    case 0: break; // end of option list;
-	    case 1: opt++; optlen--; break; // noop
-	    default:
-		if (optlen<2 || optlen<opt[1]) break;
-		if (*opt==3 && opt[1]>=3)
+static void tcp_rewrite_winsize(struct tcphdr *tcp, uint16_t winsize)
+{
+	uint16_t winsize_old;
+	/*
+		uint8_t scale_factor=1;
+		int optlen = (tcp->doff << 2);
+		uint8_t *opt = (uint8_t*)(tcp+1);
+
+		optlen = optlen>sizeof(struct tcphdr) ? optlen-sizeof(struct tcphdr) : 0;
+		printf("optslen=%d\n",optlen);
+		while (optlen)
 		{
-		    scale_factor=opt[2];
-		    printf("Found scale factor %u\n",opt[2]);
-		    //opt[2]=0;
+		switch(*opt)
+		{
+			case 0: break; // end of option list;
+			case 1: opt++; optlen--; break; // noop
+			default:
+			if (optlen<2 || optlen<opt[1]) break;
+			if (*opt==3 && opt[1]>=3)
+			{
+				scale_factor=opt[2];
+				printf("Found scale factor %u\n",opt[2]);
+				//opt[2]=0;
+			}
+			optlen-=opt[1];
+			opt+=opt[1];
 		}
-		optlen-=opt[1];
-		opt+=opt[1];
-	}	
-    }
-*/
-    winsize_old = htons(tcp->window); // << scale_factor;
-    tcp->window = htons(winsize);
-    printf("Window size change %u => %u\n",winsize_old,winsize);
+		}
+	*/
+	winsize_old = htons(tcp->window); // << scale_factor;
+	tcp->window = htons(winsize);
+	printf("Window size change %u => %u\n", winsize_old, winsize);
 }
 
-struct cbdata_s
+struct params_s
 {
 	int wsize;
 	int qnum;
-	bool hostcase,hostnospace;
+	bool hostcase, hostnospace;
 	char hostspell[4];
+	bool desync,desync_retrans;
+	uint8_t desync_ttl;
+	enum tcp_fooling_mode desync_tcp_fooling_mode;
+	uint32_t desync_fwmark;
 };
+
+static struct params_s params;
 
 
 static const char *http_methods[] = { "GET /","POST /","HEAD /","OPTIONS /","PUT /","DELETE /","CONNECT /","TRACE /",NULL };
+static bool IsHttp(const char *data, size_t len)
+{
+	const char **method;
+	size_t method_len;
+	for (method = http_methods; *method; method++)
+	{
+		method_len = strlen(*method);
+		if (method_len <= len && !memcmp(data, *method, method_len))
+			return true;
+	}
+	return false;
+}
+
 // data/len points to data payload
-bool modify_tcp_packet(unsigned char *data,int len,struct tcphdr *tcphdr,const struct cbdata_s *cbdata)
+static bool modify_tcp_packet(uint8_t *data, size_t len, struct tcphdr *tcphdr)
 {
 	const char **method;
 	size_t method_len = 0;
-	unsigned char *phost,*pua;
+	uint8_t *phost, *pua;
 	bool bRet = false;
-	
-	if (cbdata->wsize && tcp_synack_segment(tcphdr))
+
+	if (params.wsize && tcp_synack_segment(tcphdr))
 	{
-		tcp_rewrite_winsize(tcphdr,(uint16_t)cbdata->wsize);
+		tcp_rewrite_winsize(tcphdr, (uint16_t)params.wsize);
 		bRet = true;
 	}
 
-	if ((cbdata->hostcase || cbdata->hostnospace) && (phost = find_bin(data,len,"\r\nHost: ",8)))
+	if ((params.hostcase || params.hostnospace) && (phost = find_bin(data, len, "\r\nHost: ", 8)))
 	{
-		if (cbdata->hostcase)
+		if (params.hostcase)
 		{
-			printf("modifying Host: => %c%c%c%c:\n",cbdata->hostspell[0],cbdata->hostspell[1],cbdata->hostspell[2],cbdata->hostspell[3]);
-			memcpy(phost+2,cbdata->hostspell,4);
+			printf("modifying Host: => %c%c%c%c:\n", params.hostspell[0], params.hostspell[1], params.hostspell[2], params.hostspell[3]);
+			memcpy(phost + 2, params.hostspell, 4);
 			bRet = true;
 		}
-		if (cbdata->hostnospace && (pua = find_bin(data,len,"\r\nUser-Agent: ",14)) && (pua = find_bin(pua+1,len-(pua-data)-1,"\r\n",2)))
+		if (params.hostnospace && (pua = find_bin(data, len, "\r\nUser-Agent: ", 14)) && (pua = find_bin(pua + 1, len - (pua - data) - 1, "\r\n", 2)))
 		{
 			printf("removing space after Host: and adding it to User-Agent:\n");
 			if (pua > phost)
 			{
-				memmove(phost+7,phost+8,pua-phost-8);
-				phost[pua-phost-1] = ' ';
+				memmove(phost + 7, phost + 8, pua - phost - 8);
+				phost[pua - phost - 1] = ' ';
 			}
 			else
 			{
-				memmove(pua+1,pua,phost-pua+7);
+				memmove(pua + 1, pua, phost - pua + 7);
 				*pua = ' ';
 			}
 			bRet = true;
@@ -297,82 +291,138 @@ bool modify_tcp_packet(unsigned char *data,int len,struct tcphdr *tcphdr,const s
 	return bRet;
 }
 
-// ret: false - not modified, true - modified
-bool processPacketData(unsigned char *data,int len,const struct cbdata_s *cbdata)
+// result : true - drop original packet, false = dont drop
+static bool dpi_desync_packet(const uint8_t *data_pkt, size_t len_pkt, const struct iphdr *iphdr, const struct ip6_hdr *ip6hdr, const struct tcphdr *tcphdr, const uint8_t *data_payload, size_t len_payload)
+{
+	if (!!iphdr == !!ip6hdr) return false; // one and only one must be present
+	if (tcphdr->syn) return false;
+
+	struct sockaddr_storage src, dst;
+	extract_endpoints(iphdr, ip6hdr, tcphdr, &src, &dst);
+
+	if (len_payload)
+	{
+		printf("sending dpi desync packet src=");
+		print_sockaddr((struct sockaddr *)&src);
+		printf(" dst=");
+		print_sockaddr((struct sockaddr *)&dst);
+		printf("\n");
+
+		bool bIsHttp = IsHttp(data_payload,len_payload);
+		const uint8_t *fake = bIsHttp ? (uint8_t*)fake_http_request : fake_https_request;
+		size_t fake_size = bIsHttp ? sizeof(fake_http_request) : sizeof(fake_https_request);
+
+		uint8_t newdata[1500];
+		size_t newlen = sizeof(newdata);
+		prepare_tcp_segment((struct sockaddr *)&src, (struct sockaddr *)&dst, *((uint8_t*)tcphdr+13), tcphdr->seq, tcphdr->ack_seq,
+			params.desync_ttl ? params.desync_ttl : iphdr ? iphdr->ttl : ip6hdr->ip6_ctlun.ip6_un1.ip6_un1_hlim,
+ 			params.desync_tcp_fooling_mode,
+			fake, fake_size, newdata, &newlen);
+		if (!rawsend((struct sockaddr *)&dst, params.desync_fwmark, newdata, newlen))
+			return false;
+
+		if (params.desync_retrans)
+		{
+			printf("dropping packet to force retransmission. len=%zu len_payload=%zu\n", len_pkt, len_payload);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+typedef enum
+{
+	pass = 0, modify, drop
+} packet_process_result;
+static packet_process_result processPacketData(uint8_t *data_pkt, size_t len_pkt, uint32_t *mark)
 {
 	struct iphdr *iphdr = NULL;
 	struct ip6_hdr *ip6hdr = NULL;
 	struct tcphdr *tcphdr = NULL;
-	int len_tcp;
-	bool bRet = false;
+	size_t len = len_pkt, len_tcp;
+	uint8_t *data = data_pkt;
+	packet_process_result res = pass;
 	uint8_t proto;
 
-	if (proto_check_ipv4(data,len))
+	if (proto_check_ipv4(data, len))
 	{
 		iphdr = (struct iphdr *) data;
 		proto = iphdr->protocol;
-		proto_skip_ipv4(&data,&len);
+		proto_skip_ipv4(&data, &len);
 	}
-	else if (proto_check_ipv6(data,len))
+	else if (proto_check_ipv6(data, len))
 	{
 		ip6hdr = (struct ip6_hdr *) data;
-		proto_skip_ipv6(&data,&len,&proto);
+		proto_skip_ipv6(&data, &len, &proto);
 	}
 	else
 	{
 		// not ipv6 and not ipv4
-		return false;
+		return res;
 	}
-	
-	if (proto==IPPROTO_TCP && proto_check_tcp(data,len))
+
+	if (proto == IPPROTO_TCP && proto_check_tcp(data, len))
 	{
-	
+
 		tcphdr = (struct tcphdr *) data;
 		len_tcp = len;
-		proto_skip_tcp(&data,&len);
+		proto_skip_tcp(&data, &len);
 		//printf("got TCP packet. payload_len=%d\n",len);
 
-		if (bRet = modify_tcp_packet(data,len,tcphdr,cbdata))
+		if (params.desync && !(*mark & params.desync_fwmark))
+		{
+			if (dpi_desync_packet(data_pkt, len_pkt, iphdr, ip6hdr, tcphdr, data, len))
+				res = drop;
+		}
+
+		if (res!=drop && modify_tcp_packet(data, len, tcphdr))
 		{
 			if (iphdr)
-				tcp_fix_checksum(tcphdr,len_tcp,iphdr->saddr,iphdr->daddr);
+				tcp_fix_checksum(tcphdr, len_tcp, iphdr->saddr, iphdr->daddr);
 			else
-				tcp6_fix_checksum(tcphdr,len_tcp,&ip6hdr->ip6_src,&ip6hdr->ip6_dst);
+				tcp6_fix_checksum(tcphdr, len_tcp, &ip6hdr->ip6_src, &ip6hdr->ip6_dst);
+			res = modify;
 		}
 	}
-	return bRet;
+	return res;
 }
 
 
 static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
-	      struct nfq_data *nfa, void *cookie)
+	struct nfq_data *nfa, void *cookie)
 {
-	int id,len;
+	int id;
+	size_t len;
 	struct nfqnl_msg_packet_hdr *ph;
-	unsigned char *data;
-	const struct cbdata_s *cbdata = (struct cbdata_s*)cookie;
+	uint8_t *data;
 
 	ph = nfq_get_msg_packet_hdr(nfa);
 	id = ph ? ntohl(ph->packet_id) : 0;
 
+	uint32_t mark = nfq_get_nfmark(nfa);
 	len = nfq_get_payload(nfa, &data);
-	printf("packet: id=%d len=%d\n",id,len);
+	printf("packet: id=%d len=%zu\n", id, len);
 	if (len >= 0)
 	{
-		if (processPacketData(data, len, cbdata))
-			return nfq_set_verdict(qh, id, NF_ACCEPT, len, data);
+		switch (processPacketData(data, len, &mark))
+		{
+		case modify: return nfq_set_verdict2(qh, id, NF_ACCEPT, mark, len, data);
+		case drop: return nfq_set_verdict2(qh, id, NF_DROP, mark, 0, NULL);
+		}
 	}
 
-	return nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
+	return nfq_set_verdict2(qh, id, NF_ACCEPT, mark, 0, NULL);
 }
 
-bool setpcap(cap_value_t *caps,int ncaps)
+static bool setpcap(cap_value_t *caps, int ncaps)
 {
 	cap_t capabilities;
-	
+
 	if (!(capabilities = cap_init()))
 		return false;
-	
+
 	if (ncaps && (cap_set_flag(capabilities, CAP_PERMITTED, ncaps, caps, CAP_SET) ||
 		cap_set_flag(capabilities, CAP_EFFECTIVE, ncaps, caps, CAP_SET)))
 	{
@@ -387,32 +437,32 @@ bool setpcap(cap_value_t *caps,int ncaps)
 	cap_free(capabilities);
 	return true;
 }
-int getmaxcap()
+static int getmaxcap()
 {
 	int maxcap = CAP_LAST_CAP;
-	FILE *F = fopen("/proc/sys/kernel/cap_last_cap","r");
+	FILE *F = fopen("/proc/sys/kernel/cap_last_cap", "r");
 	if (F)
 	{
-		fscanf(F,"%d",&maxcap);
+		int n = fscanf(F, "%d", &maxcap);
 		fclose(F);
 	}
 	return maxcap;
-	
+
 }
-bool dropcaps()
+static bool dropcaps()
 {
 	// must have CAP_SETPCAP at the end. its required to clear bounding set
-	cap_value_t cap_values[] = {CAP_NET_ADMIN,CAP_SETPCAP};
-	int capct=sizeof(cap_values)/sizeof(*cap_values);
+	cap_value_t cap_values[] = { CAP_NET_ADMIN,CAP_NET_RAW,CAP_SETPCAP };
+	int capct = sizeof(cap_values) / sizeof(*cap_values);
 	int maxcap = getmaxcap();
 
 	if (setpcap(cap_values, capct))
 	{
-		for(int cap=0;cap<=maxcap;cap++)
+		for (int cap = 0; cap <= maxcap; cap++)
 		{
 			if (cap_drop_bound(cap))
 			{
-				fprintf(stderr,"could not drop cap %d\n",cap);
+				fprintf(stderr, "could not drop cap %d\n", cap);
 				perror("cap_drop_bound");
 			}
 		}
@@ -425,7 +475,7 @@ bool dropcaps()
 	}
 	return true;
 }
-bool droproot(uid_t uid, gid_t gid)
+static bool droproot(uid_t uid, gid_t gid)
 {
 	if (uid || gid)
 	{
@@ -470,36 +520,43 @@ void daemonize()
 	close(STDERR_FILENO);
 	/* redirect fd's 0,1,2 to /dev/null */
 	open("/dev/null", O_RDWR);
+	int fd;
 	/* stdin */
-	dup(0);
+	fd = dup(0);
 	/* stdout */
-	dup(0);
+	fd = dup(0);
 	/* stderror */
 }
 
-bool writepid(const char *filename)
+static bool writepid(const char *filename)
 {
 	FILE *F;
-	if (!(F=fopen(filename,"w")))
+	if (!(F = fopen(filename, "w")))
 		return false;
-	fprintf(F,"%d",getpid());
+	fprintf(F, "%d", getpid());
 	fclose(F);
 	return true;
 }
 
 
-void exithelp()
+static void exithelp()
 {
 	printf(
-	" --qnum=<nfqueue_number>\n"
-	" --wsize=<window_size>\t; set window size. 0 = do not modify\n"
-	" --hostcase\t\t; change Host: => host:\n"
-	" --hostspell\t\t; exact spelling of \"Host\" header. must be 4 chars. default is \"host\"\n"
-	" --hostnospace\t\t; remove space after Host: and add it to User-Agent: to preserve packet size\n"
-	" --daemon\t\t; daemonize\n"
-	" --pidfile=<filename>\t; write pid to file\n"
-	" --user=<username>\t; drop root privs\n"
-	" --uid=uid[:gid]\t; drop root privs\n"
+		" --qnum=<nfqueue_number>\n"
+		" --daemon\t\t\t\t; daemonize\n"
+		" --pidfile=<filename>\t\t\t; write pid to file\n"
+		" --user=<username>\t\t\t; drop root privs\n"
+		" --uid=uid[:gid]\t\t\t; drop root privs\n"
+		" --wsize=<window_size>\t\t\t; set window size. 0 = do not modify\n"
+		" --hostcase\t\t\t\t; change Host: => host:\n"
+		" --hostspell\t\t\t\t; exact spelling of \"Host\" header. must be 4 chars. default is \"host\"\n"
+		" --hostnospace\t\t\t\t; remove space after Host: and add it to User-Agent: to preserve packet size\n"
+		" --dpi-desync\t\t\t\t; try to desync dpi state\n"
+		" --dpi-desync-fwmark=<int|0xHEX>\t; override fwmark for desync packet. default = 0x%08X\n"
+		" --dpi-desync-ttl=<int>\t\t\t; set ttl for desync packet\n"
+		" --dpi-desync-fooling=none|md5sig|badsum\n"
+		" --dpi-desync-retrans=0|1\t\t; 1=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first\n",
+		DPI_DESYNC_FWMARK_DEFAULT
 	);
 	exit(1);
 }
@@ -510,106 +567,146 @@ int main(int argc, char **argv)
 	struct nfq_q_handle *qh;
 	int fd;
 	int rv;
-	char buf[4096] __attribute__ ((aligned));
-	struct cbdata_s cbdata;
-	int option_index=0;
+	char buf[4096] __attribute__((aligned));
+	int option_index = 0;
 	int v;
-	bool daemon=false;
-	uid_t uid=0;
-	gid_t gid=0;
+	bool daemon = false;
+	uid_t uid = 0;
+	gid_t gid = 0;
 	char pidfile[256];
 
-	memset(&cbdata,0,sizeof(cbdata));
-	memcpy(cbdata.hostspell,"host",4); // default hostspell
+	srand(time(NULL));
+
+	memset(&params, 0, sizeof(params));
+	memcpy(params.hostspell, "host", 4); // default hostspell
 	*pidfile = 0;
+
+	params.desync_fwmark = DPI_DESYNC_FWMARK_DEFAULT;
+	params.desync_retrans = true;
 
 	const struct option long_options[] = {
 		{"qnum",required_argument,0,0},	// optidx=0
 		{"daemon",no_argument,0,0},		// optidx=1
-		{"wsize",required_argument,0,0},	// optidx=2
-		{"hostcase",no_argument,0,0},	// optidx=3
-		{"hostspell",required_argument,0,0}, // optidx=4
-		{"hostnospace",no_argument,0,0},	// optidx=5
-		{"pidfile",required_argument,0,0},	// optidx=6
-		{"user",required_argument,0,0 },// optidx=7
-		{"uid",required_argument,0,0 },// optidx=8
+		{"pidfile",required_argument,0,0},	// optidx=2
+		{"user",required_argument,0,0 },// optidx=3
+		{"uid",required_argument,0,0 },// optidx=4
+		{"wsize",required_argument,0,0},	// optidx=5
+		{"hostcase",no_argument,0,0},	// optidx=6
+		{"hostspell",required_argument,0,0}, // optidx=7
+		{"hostnospace",no_argument,0,0},	// optidx=8
+		{"dpi-desync",no_argument,0,0},	// optidx=9
+		{"dpi-desync-fwmark",required_argument,0,0},	// optidx=10
+		{"dpi-desync-ttl",required_argument,0,0},	// optidx=11
+		{"dpi-desync-fooling",required_argument,0,0},	// optidx=12
+		{"dpi-desync-retrans",required_argument,0,0},	// optidx=13
 		{NULL,0,NULL,0}
 	};
-	if (argc<2) exithelp();
-	while ((v=getopt_long_only(argc,argv,"",long_options,&option_index))!=-1)
+	if (argc < 2) exithelp();
+	while ((v = getopt_long_only(argc, argv, "", long_options, &option_index)) != -1)
 	{
-	    if (v) exithelp();
-	    switch(option_index)
-	    {
+		if (v) exithelp();
+		switch (option_index)
+		{
 		case 0: /* qnum */
-		    cbdata.qnum=atoi(optarg);
-		    if (cbdata.qnum<0 || cbdata.qnum>65535)
-		    {
-			fprintf(stderr,"bad qnum\n");
-			exit(1);
-		    }
-		    break;
+			params.qnum = atoi(optarg);
+			if (params.qnum < 0 || params.qnum>65535)
+			{
+				fprintf(stderr, "bad qnum\n");
+				exit(1);
+			}
+			break;
 		case 1: /* daemon */
-		    daemon = true;
-		    break;
-		case 2: /* wsize */
-		    cbdata.wsize=atoi(optarg);
-		    if (cbdata.wsize<0 || cbdata.wsize>65535)
-		    {
-			fprintf(stderr,"bad wsize\n");
-			exit(1);
-		    }
-		    break;
-		case 3: /* hostcase */
-		    cbdata.hostcase = true;
-		    break;
-		case 4: /* hostspell */
-		    if (strlen(optarg)!=4)
-		    {
-			fprintf(stderr,"hostspell must be exactly 4 chars long\n");
-			exit(1);
-		    }
-		    cbdata.hostcase = true;
-		    memcpy(cbdata.hostspell,optarg,4);
-		    break;
-		case 5: /* hostnospace */
-		    cbdata.hostnospace = true;
-		    break;
-		case 6: /* pidfile */
-		    strncpy(pidfile,optarg,sizeof(pidfile));
-		    pidfile[sizeof(pidfile)-1]='\0';
-		    break;
-		case 7: /* user */
-	    	{
-	    		struct passwd *pwd = getpwnam(optarg);
+			daemon = true;
+			break;
+		case 2: /* pidfile */
+			strncpy(pidfile, optarg, sizeof(pidfile));
+			pidfile[sizeof(pidfile) - 1] = '\0';
+			break;
+		case 3: /* user */
+		{
+			struct passwd *pwd = getpwnam(optarg);
 			if (!pwd)
 			{
-				fprintf(stderr,"non-existent username supplied\n");
+				fprintf(stderr, "non-existent username supplied\n");
 				exit(1);
 			}
 			uid = pwd->pw_uid;
 			gid = pwd->pw_gid;
 			break;
-	    	}
-		case 8: /* uid */
-			gid=0x7FFFFFFF; // default git. drop gid=0
-			if (!sscanf(optarg,"%u:%u",&uid,&gid))
+		}
+		case 4: /* uid */
+			gid = 0x7FFFFFFF; // default git. drop gid=0
+			if (!sscanf(optarg, "%u:%u", &uid, &gid))
 			{
 				fprintf(stderr, "--uid should be : uid[:gid]\n");
 				exit(1);
 			}
 			break;
-	    }
+		case 5: /* wsize */
+			params.wsize = atoi(optarg);
+			if (params.wsize < 0 || params.wsize>65535)
+			{
+				fprintf(stderr, "bad wsize\n");
+				exit(1);
+			}
+			break;
+		case 6: /* hostcase */
+			params.hostcase = true;
+			break;
+		case 7: /* hostspell */
+			if (strlen(optarg) != 4)
+			{
+				fprintf(stderr, "hostspell must be exactly 4 chars long\n");
+				exit(1);
+			}
+			params.hostcase = true;
+			memcpy(params.hostspell, optarg, 4);
+			break;
+		case 8: /* hostnospace */
+			params.hostnospace = true;
+			break;
+		case 9: /* dpi-desync */
+			params.desync = true;
+			break;
+		case 10: /* dpi-desync */
+			params.desync_fwmark = 0;
+			if (!sscanf(optarg, "0x%X", &params.desync_fwmark)) sscanf(optarg, "%u", &params.desync_fwmark);
+			if (!params.desync_fwmark)
+			{
+				fprintf(stderr, "dpi-desync-fwmark should be decimal or 0xHEX and should not be zero\n");
+				exit(1);
+			}
+			break;
+		case 11: /* dpi-desync-ttl */
+			params.desync_ttl = (uint8_t)atoi(optarg);
+			break;
+		case 12: /* dpi-desync-fooling */
+			if (!strcmp(optarg,"none"))
+				params.desync_tcp_fooling_mode = TCP_FOOL_NONE;
+			else if (!strcmp(optarg,"md5sig"))
+				params.desync_tcp_fooling_mode = TCP_FOOL_MD5SIG;
+			else if (!strcmp(optarg,"badsum"))
+				params.desync_tcp_fooling_mode = TCP_FOOL_BADSUM;
+			else
+			{
+				fprintf(stderr, "dpi-desync-fooling allowed values : none,md5sig,badsum\n");
+				exit(1);
+			}
+			break;
+		case 13: /* dpi-desync-retrans */
+			params.desync_retrans = !!atoi(optarg);
+			break;
+		}
 	}
 
 	if (daemon) daemonize();
-	
+
 	h = NULL;
 	qh = NULL;
 
 	if (*pidfile && !writepid(pidfile))
 	{
-		fprintf(stderr,"could not write pidfile\n");
+		fprintf(stderr, "could not write pidfile\n");
 		goto exiterr;
 	}
 
@@ -632,8 +729,8 @@ int main(int argc, char **argv)
 		goto exiterr;
 	}
 
-	printf("binding this socket to queue '%u'\n", cbdata.qnum);
-	qh = nfq_create_queue(h, cbdata.qnum, &cb, &cbdata);
+	printf("binding this socket to queue '%u'\n", params.qnum);
+	qh = nfq_create_queue(h, params.qnum, &cb, &params);
 	if (!qh) {
 		fprintf(stderr, "error during nfq_create_queue()\n");
 		goto exiterr;
@@ -644,15 +741,15 @@ int main(int argc, char **argv)
 		fprintf(stderr, "can't set packet_copy mode\n");
 		goto exiterr;
 	}
-	
-	if (!droproot(uid,gid)) goto exiterr;
-	fprintf(stderr,"Running as UID=%u GID=%u\n",getuid(),getgid());
-		
+
+	if (!droproot(uid, gid)) goto exiterr;
+	fprintf(stderr, "Running as UID=%u GID=%u\n", getuid(), getgid());
+
 	fd = nfq_fd(h);
 	while ((rv = recv(fd, buf, sizeof(buf), 0)) && rv >= 0)
 	{
-	    int r=nfq_handle_packet(h, buf, rv);
-	    if (r) fprintf(stderr,"nfq_handle_packet error %d\n",r);
+		int r = nfq_handle_packet(h, buf, rv);
+		if (r) fprintf(stderr, "nfq_handle_packet error %d\n", r);
 	}
 
 	printf("unbinding from queue 0\n");
@@ -669,7 +766,7 @@ int main(int argc, char **argv)
 	nfq_close(h);
 
 	return 0;
-	
+
 exiterr:
 	if (qh) nfq_destroy_queue(qh);
 	if (h) nfq_close(h);
