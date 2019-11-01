@@ -574,7 +574,7 @@ check_prerequisites_openwrt()
 {
 	echo \* checking prerequisites
 
-	local PKGS="iptables-mod-extra iptables-mod-nfqueue iptables-mod-filter iptables-mod-ipopt ipset curl"
+	local PKGS="iptables-mod-extra iptables-mod-nfqueue iptables-mod-filter iptables-mod-ipopt iptables-mod-conntrack-extra ipset curl"
 	[ "$DISABLE_IPV6" != "1" ] && PKGS="$PKGS ip6tables-mod-nat"
 	local UPD=0
 
