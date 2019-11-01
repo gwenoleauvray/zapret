@@ -157,8 +157,8 @@ After completion of the tcp 3-way handshake, the first data packet from the clie
 It usually has "GET / ..." or TLS ClientHello. We drop this packet, replacing with a fake version
 with another harmless but valid http or https request. This packet must reach DPI and be validated as a good request,
 but do not reach the destination server. The following means are available: set a low TTL, send a packet with bad checksum,
-add tcp option "MD5 signature". The latter option does not always work, use with caution. It’s best to find out which
-hop your DPI is on and adjust TTL accordingly.
+add tcp option "MD5 signature". The latter option does not always work, use with caution. Packets with invalid checksum
+can be dropped by NAT. It’s best to find out which hop your DPI is on and adjust TTL accordingly.
 Original packet is dropped, there is no response from the server. What will OS do ? Perform a retransmission.
 The first retransmission occurs after 0.2 seconds, then the delay increases exponentially.
 So there will be some delay at the beginning of each connection. Sites will load slower.
