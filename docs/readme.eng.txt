@@ -130,14 +130,19 @@ This program is a packet modifier and a NFQUEUE queue handler.
 It takes the following parameters:
 
  --qnum=<nfqueue_number>
- --wsize=<window_size>  ; set window size. 0 = do not modify
- --hostcase             ; change Host: => host:
- --hostspell=HoSt       ; exact spelling of the "Host" header. must be 4 chars. default is "host"
- --hostnospace          ; remove space after Host: and add it to User-Agent: to preserve packet size
- --daemon               ; daemonize
- --pidfile=<filename>   ; write pid to file
- --user=<username>      ; drop root privs
- --uid=uid[:gid]	; drop root privs
+ --wsize=<window_size> 			; set window size. 0 = do not modify
+ --hostcase           			; change Host: => host:
+ --hostspell=HoSt      			; exact spelling of the "Host" header. must be 4 chars. default is "host"
+ --hostnospace         			; remove space after Host: and add it to User-Agent: to preserve packet size
+ --daemon              			; daemonize
+ --pidfile=<filename>  			; write pid to file
+ --user=<username>      		; drop root privs
+ --uid=uid[:gid]			; drop root privs
+ --dpi-desync                           ; try to desync dpi state
+ --dpi-desync-fwmark=<int|0xHEX>        ; override fwmark for desync packet. default = 0x40000000
+ --dpi-desync-ttl=<int>                 ; set ttl for desync packet
+ --dpi-desync-fooling=none|md5sig|badsum
+ --dpi-desync-retrans=0|1               ; 1=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first
 
 The manipulation parameters can be combined in any way.
 
@@ -146,6 +151,27 @@ Following segments do not restore their full length. Connection can go for a lon
 Package modification parameters (--hostcase, ...) may not work, because nfqws does not work with the connection,
 but only with separate packets in which the search may not be found, because scattered across multiple packets.
 If the source of the packages is Windows, there is no such problem.
+
+DPI DESYNC ATTACK
+After completion of the tcp 3-way handshake, the first data packet from the client goes.
+It usually has "GET / ..." or TLS ClientHello. We drop this packet, replacing with a fake version
+with another harmless but valid http or https request. This packet must reach DPI and be validated as a good request,
+but do not reach the destination server. The following means are available: set a low TTL, send a packet with bad checksum,
+add tcp option "MD5 signature". The latter option does not always work, use with caution. It’s best to find out which
+hop your DPI is on and adjust TTL accordingly.
+Original packet is dropped, there is no response from the server. What will OS do ? Perform a retransmission.
+The first retransmission occurs after 0.2 seconds, then the delay increases exponentially.
+So there will be some delay at the beginning of each connection. Sites will load slower.
+Unfortunately, if you send a fake packet right away, before the NFQUEUE verdict is issued on the original packet, there are no guarantees
+which packet will go first. Therefore, a delay is required, it is implemented through the retransmission mechanism.
+You can disable the drop of the original packet. Sometimes it works. But not very reliable.
+
+iptables for performing the attack :
+
+iptables -t mangle -I POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 2:4 -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num 200 --queue-bypass
+
+connbytes will only queue the first data packet. mark is needed to keep away generated packets from NFQUEUE.
+nfqws sets fwmark when it sends generated packets.
 
 tpws
 -----
@@ -271,11 +297,15 @@ nfqws_ipset - use nfqws for http. targets are filtered by ipset "zapret"
 nfqws_ipset_https - use nfqws for http and https. targets are filtered by ipset "zapret"
 nfqws_all - use nfqws for all http
 nfqws_all_https - use nfqws for all http and https
+nfqws_all_desync - use nfqws for DPI desync attack on http и https for all http and https
+nfqws_ipset_desync - use nfqws for DPI desync attack on http и https for all http and https. targets are filtered by ipset "zapret"
+
 tpws_ipset - use tpws for http. targets are filtered by ipset "zapret"
 tpws_ipset_https - use tpws for http and https. targets are filtered by ipset "zapret"
 tpws_all - use tpws for all http
 tpws_all_https - use tpws for all http and https
 tpws_hostlist - same as tpws_all but touch only domains from the hostlist
+
 ipset - only fill ipset. futher actions depend on your own code
 
 Its possible to change manipulation options used by the daemons :
@@ -283,6 +313,12 @@ Its possible to change manipulation options used by the daemons :
 NFQWS_OPT="--wsize=3 --hostspell=HOST"
 TPWS_OPT_HTTP="--hostspell=HOST --split-http-req=method"
 TPWS_OPT_HTTPS="--split-pos=3"
+
+Options for DPI desync attack are configured separately:
+
+DESYNC_MARK=0x40000000
+NFQWS_OPT_DESYNC="--dpi-desync --dpi-desync-ttl=0 --dpi-desync-fooling=badsum --dpi-desync-fwmark=$DESYNC_MARK"
+
 
 The GETLIST parameter tells the install_easy.sh installer which script to call
 to update the list of blocked ip or hosts.

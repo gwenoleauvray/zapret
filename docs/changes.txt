@@ -143,3 +143,7 @@ v28
 
 tpws : added socks5 support
 ipset : major RKN getlist rewrite. added antifilter.network support
+
+v29
+
+nfqws : DPI desync attack

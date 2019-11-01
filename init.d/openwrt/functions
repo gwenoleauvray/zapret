@@ -7,6 +7,7 @@ QNUM=200
 TPPORT_HTTP=1188
 TPPORT_HTTPS=1189
 TPWS_USER=daemon
+[ -n "$DESYNC_MARK" ] || DESYNC_MARK=0x40000000
 
 # max wait time for the link local ipv6 on the LAN interface
 LINKLOCAL_WAIT_SEC=5
@@ -132,14 +133,14 @@ fw_nfqws_pre()
     network_find_wan_all wan_iface
     for ext_iface in $wan_iface; do
        network_get_device DEVICE $ext_iface
-       ipt PREROUTING -t mangle -i $DEVICE -p tcp --tcp-flags SYN,ACK SYN,ACK $1 -j NFQUEUE --queue-num $3 --queue-bypass
+       ipt PREROUTING -t mangle -i $DEVICE -p tcp $1 -j NFQUEUE --queue-num $3 --queue-bypass
     done
  }
  [ "$DISABLE_IPV6" = "1" ] || {
     network_find_wan6_all wan_iface
     for ext_iface in $wan_iface; do
        network_get_device DEVICE $ext_iface
-       ipt6 PREROUTING -t mangle -i $DEVICE -p tcp --tcp-flags SYN,ACK SYN,ACK $2 -j NFQUEUE --queue-num $3 --queue-bypass
+       ipt6 PREROUTING -t mangle -i $DEVICE -p tcp $2 -j NFQUEUE --queue-num $3 --queue-bypass
     done
  }
 }
@@ -208,6 +209,8 @@ create_ipset()
 
 zapret_apply_firewall()
 {
+	local rule
+
 	case "${MODE}" in
 	    tpws_hostlist|tpws_all)
 			fw_tpws "--dport 80" "--dport 80" $TPPORT_HTTP
@@ -227,21 +230,42 @@ zapret_apply_firewall()
 			;;
 	    nfqws_ipset)
 			create_ipset no-update
-			fw_nfqws_pre "--sport 80 -m set --match-set zapret src" "--sport 80 -m set --match-set zapret6 src" $QNUM
-			fw_nfqws_post "--dport 80 -m set --match-set zapret dst" "--dport 80 -m set --match-set zapret6 dst" $QNUM
+			rule="--sport 80 --tcp-flags SYN,ACK SYN,ACK"
+			fw_nfqws_pre "$rule -m set --match-set zapret src" "$rule -m set --match-set zapret6 src" $QNUM
+			rule="--dport 80"
+			fw_nfqws_post "$rule -m set --match-set zapret dst" "$rule -m set --match-set zapret6 dst" $QNUM
 			;;
 	    nfqws_ipset_https)
 			create_ipset no-update
-			fw_nfqws_pre "-m multiport --sports 80,443 -m set --match-set zapret src" "-m multiport --sports 80,443 -m set --match-set zapret6 src" $QNUM
-			fw_nfqws_post "--dport 80 -m set --match-set zapret dst" "--dport 80 -m set --match-set zapret6 dst" $QNUM
+			rule="-m multiport --sports 80,443 --tcp-flags SYN,ACK SYN,ACK"
+			fw_nfqws_pre "$rule -m set --match-set zapret src" "$rule -m set --match-set zapret6 src" $QNUM
+			rule="--dport 80"
+			fw_nfqws_post "$rule -m set --match-set zapret dst" "$rule -m set --match-set zapret6 dst" $QNUM
 			;;
 	    nfqws_all)
-			fw_nfqws_pre "--sport 80" "--sport 80" $QNUM
-			fw_nfqws_post "--dport 80" "--dport 80" $QNUM
+			rule="--sport 80 --tcp-flags SYN,ACK SYN,ACK"
+			fw_nfqws_pre "$rule" "$rule" $QNUM
+			rule="--dport 80"
+			fw_nfqws_pre "$rule" "$rule" $QNUM
 			;;
 	    nfqws_all_https)
-			fw_nfqws_pre "-m multiport --sports 80,443" "-m multiport --sports 80,443" $QNUM
-			fw_nfqws_post "--dport 80" "--dport 80" $QNUM
+			rule="-m multiport --sports 80,443 --tcp-flags SYN,ACK SYN,ACK"
+			fw_nfqws_pre "$rule" "$rule" $QNUM
+			rule="--dport 80"
+			fw_nfqws_pre "$rule" "$rule" $QNUM
+			;;
+	    nfqws_all_desync)
+			rule="-m multiport --sports 80,443 --tcp-flags SYN,ACK SYN,ACK"
+			fw_nfqws_pre "$rule" "$rule" $QNUM
+			rule="-m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 2:4 -m mark ! --mark $DESYNC_MARK/$DESYNC_MARK"
+			fw_nfqws_post "$rule" "$rule" $QNUM
+			;;
+	    nfqws_ipset_desync)
+			create_ipset no-update
+			rule="-m multiport --sports 80,443 --tcp-flags SYN,ACK SYN,ACK"
+			fw_nfqws_pre "$rule -m set --match-set zapret src" "$rule -m set --match-set zapret6 src" $QNUM
+			rule="-m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 2:4 -m mark ! --mark $DESYNC_MARK/$DESYNC_MARK"
+			fw_nfqws_post "$rule -m set --match-set zapret dst" "$rule -m set --match-set zapret6 dst" $QNUM
 			;;
 	    ipset)
 			create_ipset no-update
