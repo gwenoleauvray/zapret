@@ -157,8 +157,19 @@ After completion of the tcp 3-way handshake, the first data packet from the clie
 It usually has "GET / ..." or TLS ClientHello. We drop this packet, replacing with a fake version
 with another harmless but valid http or https request. This packet must reach DPI and be validated as a good request,
 but do not reach the destination server. The following means are available: set a low TTL, send a packet with bad checksum,
-add tcp option "MD5 signature". The latter option does not always work, use with caution. Packets with invalid checksum
-can be dropped by NAT. It’s best to find out which hop your DPI is on and adjust TTL accordingly.
+add tcp option "MD5 signature". All of them have their own disadvantages :
+
+* md5sig does not work on all servers
+* badsum doesn't work if your device is behind NAT which does not pass invalid packets.
+  Linux NAT by default does not pass them without special setting "sysctl -w net.netfilter.nf_conntrack_checksum=0"
+  Openwrt sets it from the box, other routers in most cases dont, and its not always possible to change it.
+  If nfqws is on the router, its not neccessary to switch of "net.netfilter.nf_conntrack_checksum".
+  Fake packet doesn't go through NAT, it goes through OUTPUT chain. But if your router is behind another NAT, for example ISP NAT,
+  and that NAT does not pass invalid packets, you cant do anything.
+* TTL looks like the best option, but it requires special tuning for earch ISP. If DPI is further than local ISP websites
+  you can cut access to them. Manual IP exclude list is required. Its possible to use md5sig with ttl.
+  This way you cant hurt anything, but good chances it will help to open local ISP websites.
+
 Original packet is dropped, there is no response from the server. What will OS do ? Perform a retransmission.
 The first retransmission occurs after 0.2 seconds, then the delay increases exponentially.
 So there will be some delay at the beginning of each connection. Sites will load slower.
