@@ -435,3 +435,5 @@ iproute + wireguard - in wireguard_iproute_openwrt.txt.
 SOMETIMES (but not often) a tls handshake split trick works.
 Try MODE=..._https
 May be you're lucky.
+
+MORE OFTEN DPI desync attack work, but it may require some manual tuning.
