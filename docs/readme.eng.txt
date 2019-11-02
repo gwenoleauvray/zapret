@@ -348,7 +348,7 @@ use of the protocol is permitted.
 #DISABLE_IPV4=1
 DISABLE_IPV6=1
 
-The number of streams for mdig multithreaded DNS resolver (1..100).
+The number of threads for mdig multithreaded DNS resolver (1..100).
 The more of them, the faster, but will your DNS server be offended by hammering ?
 MDIG_THREADS=30
 

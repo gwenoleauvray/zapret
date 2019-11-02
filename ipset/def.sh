@@ -55,13 +55,7 @@ digger()
  # $2 - family (4|6)
  >&2 echo digging $(wc -l <"$1") ipv$2 domains : "$1"
 
- if [ -x "$MDIG" ]; then
-  zzcat "$1" | "$MDIG" --family=$2 --threads=$MDIG_THREADS --stats=1000
- else
-  local A=A
-  [ "$2" = "6" ] && A=AAAA
-  zzcat "$1" | dig $A +short +time=8 +tries=2 -f - | grep -E '^[^;].*[^\.]$'
- fi
+ zzcat "$1" | "$MDIG" --family=$2 --threads=$MDIG_THREADS --stats=1000
 }
 
 cut_local()
