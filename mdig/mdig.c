@@ -165,10 +165,10 @@ static void *t_resolver(void *arg)
 			uint16_t family;
 			char *s_mask,s_ip[sizeof(dom)];
 
+			is_ok=0;
+
 			strncpy(s_ip,dom,sizeof(s_ip));
 			s_mask=strchr(s_ip,'/');
-
-			is_ok=0;
 			if (s_mask) *s_mask++=0;
 			family=GetAddrFamily(s_ip);
 			if (family)
