@@ -3,6 +3,8 @@
 [ -z "$TMPDIR" ] && TMPDIR=/tmp
 ZIPSET=zapret
 ZIPSET6=zapret6
+ZIPSET_EXCLUDE=nozapret
+ZIPSET_EXCLUDE6=nozapret6
 ZIPLIST="$EXEDIR/zapret-ip.txt"
 ZIPLIST6="$EXEDIR/zapret-ip6.txt"
 ZIPLIST_EXCLUDE="$EXEDIR/zapret-ip-exclude.txt"
@@ -19,6 +21,7 @@ ZIPLIST_IPBAN6="$EXEDIR/zapret-ip-ipban6.txt"
 ZIPLIST_USER_IPBAN="$EXEDIR/zapret-ip-user-ipban.txt"
 ZIPLIST_USER_IPBAN6="$EXEDIR/zapret-ip-user-ipban6.txt"
 ZUSERLIST_IPBAN="$EXEDIR/zapret-hosts-user-ipban.txt"
+ZUSERLIST_EXCLUDE="$EXEDIR/zapret-hosts-user-exclude.txt"
 
 MDIG="$EXEDIR/../mdig/mdig"
 [ -z "$MDIG_THREADS" ] && MDIG_THREADS=30
@@ -71,6 +74,14 @@ cut_local6()
 }
 
 
+getexclude()
+{
+ [ -f "$ZUSERLIST_EXCLUDE" ] && {
+  [ "$DISABLE_IPV4" != "1" ] && digger "$ZUSERLIST_EXCLUDE" 4 | sort -u > "$ZIPLIST_EXCLUDE"
+  [ "$DISABLE_IPV6" != "1" ] && digger "$ZUSERLIST_EXCLUDE" 6 | sort -u > "$ZIPLIST_EXCLUDE6"
+ }
+}
+
 getuser()
 {
  [ -f "$ZUSERLIST" ] && {
@@ -81,5 +92,6 @@ getuser()
   [ "$DISABLE_IPV4" != "1" ] && digger "$ZUSERLIST_IPBAN" 4 | cut_local | sort -u > "$ZIPLIST_USER_IPBAN"
   [ "$DISABLE_IPV6" != "1" ] && digger "$ZUSERLIST_IPBAN" 6 | cut_local6 | sort -u > "$ZIPLIST_USER_IPBAN6"
  }
+ getexclude
 }
 

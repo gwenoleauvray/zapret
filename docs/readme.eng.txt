@@ -169,6 +169,7 @@ add tcp option "MD5 signature". All of them have their own disadvantages :
 * TTL looks like the best option, but it requires special tuning for earch ISP. If DPI is further than local ISP websites
   you can cut access to them. Manual IP exclude list is required. Its possible to use md5sig with ttl.
   This way you cant hurt anything, but good chances it will help to open local ISP websites.
+  If automatic solution cannot be found then use zapret-hosts-user-exclude.txt.
 
 Original packet is dropped, there is no response from the server. What will OS do ? Perform a retransmission.
 The first retransmission occurs after 0.2 seconds, then the delay increases exponentially.
@@ -252,7 +253,7 @@ At the output, you get ipset/zapret-ip-user.txt with IP addresses.
 3) ipset/get_antifilter_*.sh. Russian specific
 
 4) ipset/get_config.sh. This script calls what is written into the GETLIST variable from the config file.
-If the variable is not defined, then no action is taken.
+If the variable is not defined, then only lists for ipsets nozapret/nozapret6 are resolved.
 
 So, if you're not russian, the only way for you is to manually add blocked domains.
 Or write your own ipset/get_iran_blocklist.sh , if you know where to download this one.
@@ -278,6 +279,11 @@ in a separate ipset "ipban". It can be used to route connections to transparent 
 IPV6: if ipv6 is enabled, then additional txt's are created with the same name, but with a "6" at the end before the extension.
 zapret-ip.txt => zapret-ip6.txt
 The ipsets zapret6 and ipban6 are created.
+
+IP EXCLUSION SYSTEM. All scripts resolve zapret-hosts-user-exclude.txt file, creating zapret-ip-exclude.txt and zapret-ip-exclude6.txt.
+They are the source for ipsets nozapret/nozapret6. All rules created by init scripts are created with these ipsets in mind.
+The IPs placed in them are not involved in the process.
+zapret-hosts-user-exclude.txt can contain domains, ipv4 and ipv6 addresses or subnets.
 
 Domain name filtering
 ---------------------

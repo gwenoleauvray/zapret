@@ -34,7 +34,7 @@ dig_reestr()
 }
 
 
-curl -k --fail --max-time 150 --connect-timeout 5 --retry 3 --max-filesize 125829120 "$ZURL_REESTR" -o "$ZREESTR" ||
+curl -k --fail --max-time 150 --connect-timeout 5 --retry 3 --max-filesize 251658240 "$ZURL_REESTR" -o "$ZREESTR" ||
 {
  echo reestr list download failed
  exit 2

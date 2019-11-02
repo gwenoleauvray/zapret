@@ -6,5 +6,5 @@ EXEDIR=$(dirname "$SCRIPT")
 
 . "$EXEDIR/../config"
 
-[ -z "$GETLIST" ] && exit 0
+[ -z "$GETLIST" ] && GETLIST=get_exclude.sh
 [ -x "$EXEDIR/$GETLIST" ] && exec "$EXEDIR/$GETLIST"

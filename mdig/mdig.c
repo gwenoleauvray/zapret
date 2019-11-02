@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <getopt.h>
@@ -18,13 +19,13 @@
 
 #define RESOLVER_EAGAIN_ATTEMPTS 2
 
-void trimstr(char *s)
+static void trimstr(char *s)
 {
 	char *p;
 	for (p = s + strlen(s) - 1; p >= s && (*p == '\n' || *p == '\r'); p--) *p = '\0';
 }
 
-const char* eai_str(int r)
+static const char* eai_str(int r)
 {
 	switch (r)
 	{
@@ -111,13 +112,13 @@ static void print_addrinfo(struct addrinfo *ai)
 	}
 }
 
-void stat_print(int ct, int ct_ok)
+static void stat_print(int ct, int ct_ok)
 {
 	if (glob.stats_every > 0)
 		interlocked_fprintf(stderr, "mdig stats : domains=%d success=%d error=%d\n", ct, ct_ok, ct-ct_ok);
 }
 
-void stat_plus(char is_ok)
+static void stat_plus(char is_ok)
 {
 	int ct,ct_ok;
 	if (glob.stats_every > 0)
@@ -129,6 +130,18 @@ void stat_plus(char is_ok)
 
 		if (!(ct % glob.stats_every)) stat_print(ct,ct_ok);
 	}
+}
+
+static uint16_t GetAddrFamily(const char *saddr)
+{
+	struct in_addr a4;
+	struct in6_addr a6;
+
+	if (inet_pton(AF_INET, saddr, &a4))
+		return AF_INET;
+	else if (inet_pton(AF_INET6, saddr, &a6))
+		return AF_INET6;
+	return 0;
 }
 
 static void *t_resolver(void *arg)
@@ -149,22 +162,60 @@ static void *t_resolver(void *arg)
 	{
 		if (*dom)
 		{
-			VLOG("resolving %s", dom);
+			uint16_t family;
+			char *s_mask,s_ip[sizeof(dom)];
+
+			strncpy(s_ip,dom,sizeof(s_ip));
+			s_mask=strchr(s_ip,'/');
+
 			is_ok=0;
-			for (i = 0; i < RESOLVER_EAGAIN_ATTEMPTS; i++)
+			if (s_mask) *s_mask++=0;
+			family=GetAddrFamily(s_ip);
+			if (family)
 			{
-				if (r = getaddrinfo(dom, NULL, &hints, &result))
+				if (family==AF_INET && (glob.family & FAMILY4) || family==AF_INET6 && (glob.family & FAMILY6))
 				{
-					VLOG("failed to resolve %s : result %d (%s)", dom, r, eai_str(r));
-					if (r == EAI_AGAIN) continue; // temporary failure. should retry
+					unsigned int mask;
+					bool mask_needed=false;
+					if (s_mask)
+					{
+						if (sscanf(s_mask,"%u",&mask))
+						{
+							switch(family)
+							{
+								case AF_INET: is_ok=mask<=32; mask_needed=mask<32; break;
+								case AF_INET6: is_ok=mask<=128; mask_needed=mask<128; break;
+							}
+						}
+					}
+					else
+						is_ok = 1;
+					if (is_ok)
+						printf(mask_needed ? "%s/%u\n" : "%s\n", s_ip, mask);
+					else
+						VLOG("bad ip/subnet %s", dom);
 				}
 				else
+						VLOG("wrong address family %s", s_ip);
+			}
+			else
+			{
+				VLOG("resolving %s", dom);
+				for (i = 0; i < RESOLVER_EAGAIN_ATTEMPTS; i++)
 				{
-					print_addrinfo(result);
-					freeaddrinfo(result);
-					is_ok=1;
+					if (r = getaddrinfo(dom, NULL, &hints, &result))
+					{
+						VLOG("failed to resolve %s : result %d (%s)", dom, r, eai_str(r));
+						if (r == EAI_AGAIN) continue; // temporary failure. should retry
+					}
+					else
+					{
+						print_addrinfo(result);
+						freeaddrinfo(result);
+						is_ok=1;
+					}
+					break;
 				}
-				break;
 			}
 			stat_plus(is_ok);
 		}

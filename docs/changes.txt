@@ -147,3 +147,4 @@ ipset : major RKN getlist rewrite. added antifilter.network support
 v29
 
 nfqws : DPI desync attack
+ip exclude system
