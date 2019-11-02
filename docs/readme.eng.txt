@@ -164,7 +164,7 @@ add tcp option "MD5 signature". All of them have their own disadvantages :
   Linux NAT by default does not pass them without special setting "sysctl -w net.netfilter.nf_conntrack_checksum=0"
   Openwrt sets it from the box, other routers in most cases dont, and its not always possible to change it.
   If nfqws is on the router, its not neccessary to switch of "net.netfilter.nf_conntrack_checksum".
-  Fake packet doesn't go through NAT, it goes through OUTPUT chain. But if your router is behind another NAT, for example ISP NAT,
+  Fake packet doesn't go through FORWARD chain, it goes through OUTPUT. But if your router is behind another NAT, for example ISP NAT,
   and that NAT does not pass invalid packets, you cant do anything.
 * TTL looks like the best option, but it requires special tuning for earch ISP. If DPI is further than local ISP websites
   you can cut access to them. Manual IP exclude list is required. Its possible to use md5sig with ttl.
