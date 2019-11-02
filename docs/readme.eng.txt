@@ -411,6 +411,7 @@ Android does not use /etc/passwd, tpws --user won't work. There's replacement.
 Use numeric uids in --uid option.
 Its recommended to use gid 3003 (AID_INET), otherwise tpws will not have inet access.
 Example : --uid 1:3003
+In iptables use : "! --uid-owner 1" instead of "! --uid-owner tpws".
 
 Write your own shell script with iptables and tpws, run it using your root manager.
 Autorun scripts are here :
