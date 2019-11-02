@@ -191,7 +191,7 @@ static void *t_resolver(void *arg)
 					else
 						is_ok = 1;
 					if (is_ok)
-						printf(mask_needed ? "%s/%u\n" : "%s\n", s_ip, mask);
+						interlocked_fprintf(stdout, mask_needed ? "%s/%u\n" : "%s\n", s_ip, mask);
 					else
 						VLOG("bad ip/subnet %s", dom);
 				}
