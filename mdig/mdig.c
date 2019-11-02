@@ -2,6 +2,7 @@
 // domain list <stdin
 // ip list >stdout
 // errors, verbose >stderr
+// transparent for valid ip or ip/subnet of allowed address family
 
 #define _GNU_SOURCE
 
