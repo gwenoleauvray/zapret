@@ -12,9 +12,11 @@
 #include <pwd.h>
 #include <sys/capability.h>
 #include <sys/prctl.h>
+#include <signal.h>
 #include <errno.h>
 #include <time.h>
 #include "darkmagic.h"
+#include "hostlist.h"
 
 #define NF_DROP 0
 #define NF_ACCEPT 1
@@ -63,7 +65,62 @@ static const uint8_t fake_https_request[] = {
 };
 
 
-static uint8_t *find_bin(unsigned char *data, size_t len, const void *blk, size_t blk_len)
+struct params_s
+{
+	int wsize;
+	int qnum;
+	bool hostcase, hostnospace;
+	char hostspell[4];
+	bool desync,desync_retrans;
+	uint8_t desync_ttl;
+	enum tcp_fooling_mode desync_tcp_fooling_mode;
+	uint32_t desync_fwmark;
+	char hostfile[256];
+	strpool *hostlist;
+};
+
+static struct params_s params;
+
+
+
+static bool bHup = false;
+static void onhup(int sig)
+{
+	printf("HUP received !\n");
+	if (params.hostlist)
+		printf("Will reload hostlist on next request\n");
+	bHup = true;
+}
+// should be called in normal execution
+static void dohup()
+{
+	if (bHup)
+	{
+		if (params.hostlist)
+		{
+			if (!LoadHostList(&params.hostlist, params.hostfile))
+			{
+				// what will we do without hostlist ?? sure, gonna die
+				exit(1);
+			}
+		}
+		bHup = false;
+	}
+}
+
+
+static const uint8_t *find_bin_const(const uint8_t *data, size_t len, const void *blk, size_t blk_len)
+{
+	while (len >= blk_len)
+	{
+		if (!memcmp(data, blk, blk_len))
+			return data;
+		data++;
+		len--;
+	}
+	return NULL;
+}
+static uint8_t *find_bin(uint8_t *data, size_t len, const void *blk, size_t blk_len)
 {
 	while (len >= blk_len)
 	{
@@ -221,19 +278,6 @@ static void tcp_rewrite_winsize(struct tcphdr *tcp, uint16_t winsize)
 	printf("Window size change %u => %u\n", winsize_old, winsize);
 }
 
-struct params_s
-{
-	int wsize;
-	int qnum;
-	bool hostcase, hostnospace;
-	char hostspell[4];
-	bool desync,desync_retrans;
-	uint8_t desync_ttl;
-	enum tcp_fooling_mode desync_tcp_fooling_mode;
-	uint32_t desync_fwmark;
-};
-
-static struct params_s params;
 
 
 static const char *http_methods[] = { "GET /","POST /","HEAD /","OPTIONS /","PUT /","DELETE /","CONNECT /","TRACE /",NULL };
@@ -249,9 +293,115 @@ static bool IsHttp(const char *data, size_t len)
 	}
 	return false;
 }
-static bool IsTLSClientHello(const char *data, size_t len)
+static bool HttpExtractHost(const uint8_t *data, size_t len, char *host, size_t len_host)
 {
-	return len>=6 && data[0]==0x16 && data[5]==0x01 && (ntohs(*(uint16_t*)(data+3))+5)<=len;
+	const uint8_t *p, *s, *e=data+len;
+
+	p = find_bin_const(data, len, "\nHost:", 6);
+	if (!p) return false;
+	p+=6;
+	while(p<e && (*p==' ' || *p=='\t')) p++;
+	s=p;
+	while(s<e && (*s!='\r' && *s!='\n' && *s!=' ' && *s!='\t')) s++;
+	if (s>p)
+	{
+		size_t slen = s-p;
+		if (host && len_host)
+		{
+			if (slen>=len_host) slen=len_host-1;
+			for(size_t i=0;i<slen;i++) host[i]=tolower(p[i]);
+			host[slen]=0;
+		}
+		return true;
+	}
+	return false;
+}
+static bool IsTLSClientHello(const uint8_t *data, size_t len)
+{
+	return len>=6 && data[0]==0x16 && data[1]==0x03 && data[2]==0x01 && data[5]==0x01 && (ntohs(*(uint16_t*)(data+3))+5)<=len;
+}
+static bool TLSFindExt(const uint8_t *data, size_t len, uint16_t type, const uint8_t **ext, size_t *len_ext)
+{
+	// +0
+	// u8	ContentType: Handshake
+	// u16	Version: TLS1.0
+	// u16	Length
+	// +5 
+	// u8	HandshakeType: ClientHello
+	// u24	Length
+	// u16	Version
+	// c[32] random
+	// u8	SessionIDLength
+	//	<SessionID>
+	// u16	CipherSuitesLength
+	//	<CipherSuites>
+	// u8	CompressionMethodsLength
+	//	<CompressionMethods>
+	// u16	ExtensionsLength
+
+	size_t l,ll;
+
+	l = 1+2+2+1+3+2+32;
+	// SessionIDLength
+	if (len<(l+1)) return false;
+	ll = data[6]<<16 | data[7]<<8 | data[8]; // HandshakeProtocol length
+	if (len<(ll+9)) return false;
+	l += data[l]+1;
+	// CipherSuitesLength
+	if (len<(l+2)) return false;
+	l += ntohs(*(uint16_t*)(data+l))+2;
+	// CompressionMethodsLength
+	if (len<(l+1)) return false;
+	l += data[l]+1;
+	// ExtensionsLength
+	if (len<(l+2)) return false;
+
+	data+=l; len-=l;
+	l=ntohs(*(uint16_t*)data);
+	data+=2; len-=2;
+	if (l<len) return false;
+
+	uint16_t ntype=htons(type);
+	while(l>=4)
+	{
+		uint16_t etype=*(uint16_t*)data;
+		size_t elen=ntohs(*(uint16_t*)(data+2));
+		data+=4; l-=4;
+		if (l<elen) break;
+		if (etype==ntype)
+		{
+			if (ext && len_ext)
+			{
+				*ext = data;
+				*len_ext = elen;
+			}
+			return true;
+		}
+		data+=elen; l-=elen;
+	}
+
+	return false;
+}
+static bool TLSHelloExtractHost(const uint8_t *data, size_t len, char *host, size_t len_host)
+{
+	const uint8_t *ext;
+	size_t elen;
+
+	if (!TLSFindExt(data,len,0,&ext,&elen)) return false;
+	// u16	data+0 - name list length
+	// u8	data+2 - server name type. 0=host_name
+	// u16	data+3 - server name length
+	if (elen<5 || ext[2]!=0) return false;
+	size_t slen = ntohs(*(uint16_t*)(ext+3));
+	ext+=5; elen-=5;
+	if (slen<elen) return false;
+	if (ext && len_host)
+	{
+		if (slen>=len_host) slen=len_host-1;
+		for(size_t i=0;i<slen;i++) host[i]=tolower(ext[i]);
+		host[slen]=0;
+	}
+	return true;
 }
 
 // data/len points to data payload
@@ -295,6 +445,8 @@ static bool modify_tcp_packet(uint8_t *data, size_t len, struct tcphdr *tcphdr)
 	return bRet;
 }
 
+
+
 // result : true - drop original packet, false = dont drop
 static bool dpi_desync_packet(const uint8_t *data_pkt, size_t len_pkt, const struct iphdr *iphdr, const struct ip6_hdr *ip6hdr, const struct tcphdr *tcphdr, const uint8_t *data_payload, size_t len_payload)
 {
@@ -305,21 +457,36 @@ static bool dpi_desync_packet(const uint8_t *data_pkt, size_t len_pkt, const str
 		struct sockaddr_storage src, dst;
 		const uint8_t *fake;
 		size_t fake_size;
+		char host[256];
+		bool bHaveHost=false;
 
 		if (IsHttp(data_payload,len_payload)) 
 		{
 			printf("packet contains HTTP request\n");
 			fake = (uint8_t*)fake_http_request;
 			fake_size = sizeof(fake_http_request);
+			if (params.hostlist) bHaveHost=HttpExtractHost(data_payload,len_payload,host,sizeof(host));
 		}
 		else if (IsTLSClientHello(data_payload,len_payload))
 		{
 			printf("packet contains TLS ClientHello\n");
 			fake = (uint8_t*)fake_https_request;
 			fake_size = sizeof(fake_https_request);
+			if (params.hostlist) bHaveHost=TLSHelloExtractHost(data_payload,len_payload,host,sizeof(host));
 		}
 		else
 			return false;
+
+		if (bHaveHost)
+		{
+
+			if (!SearchHostList(params.hostlist,host))
+			{
+				printf("Not applying dpi-desync to this request\n");
+				return false;
+			}
+		}
+
 
 		extract_endpoints(iphdr, ip6hdr, tcphdr, &src, &dst);
 		printf("sending dpi desync packet src=");
@@ -571,10 +738,30 @@ static void exithelp()
 		" --dpi-desync-fwmark=<int|0xHEX>\t; override fwmark for desync packet. default = 0x%08X\n"
 		" --dpi-desync-ttl=<int>\t\t\t; set ttl for desync packet\n"
 		" --dpi-desync-fooling=none|md5sig|badsum\n"
-		" --dpi-desync-retrans=0|1\t\t; 1=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first\n",
+		" --dpi-desync-retrans=0|1\t\t; 1=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first\n"
+		" --hostlist=<filename>\t\t\t; apply dpi desync only to the listed hosts (one host per line, subdomains auto apply)\n",
 		DPI_DESYNC_FWMARK_DEFAULT
 	);
 	exit(1);
+}
+
+void cleanup_params()
+{
+	if (params.hostlist)
+	{
+		StrPoolDestroy(&params.hostlist);
+		params.hostlist = NULL;
+	}
+}
+void exithelp_clean()
+{
+	cleanup_params();
+	exithelp();
+}
+void exit_clean(int code)
+{
+	cleanup_params();
+	exit(code);
 }
 
 int main(int argc, char **argv)
@@ -615,6 +802,7 @@ int main(int argc, char **argv)
 		{"dpi-desync-ttl",required_argument,0,0},	// optidx=11
 		{"dpi-desync-fooling",required_argument,0,0},	// optidx=12
 		{"dpi-desync-retrans",required_argument,0,0},	// optidx=13
+		{"hostlist",required_argument,0,0},		// optidx=14
 		{NULL,0,NULL,0}
 	};
 	if (argc < 2) exithelp();
@@ -628,7 +816,7 @@ int main(int argc, char **argv)
 			if (params.qnum < 0 || params.qnum>65535)
 			{
 				fprintf(stderr, "bad qnum\n");
-				exit(1);
+				exit_clean(1);
 			}
 			break;
 		case 1: /* daemon */
@@ -644,7 +832,7 @@ int main(int argc, char **argv)
 			if (!pwd)
 			{
 				fprintf(stderr, "non-existent username supplied\n");
-				exit(1);
+				exit_clean(1);
 			}
 			uid = pwd->pw_uid;
 			gid = pwd->pw_gid;
@@ -655,7 +843,7 @@ int main(int argc, char **argv)
 			if (!sscanf(optarg, "%u:%u", &uid, &gid))
 			{
 				fprintf(stderr, "--uid should be : uid[:gid]\n");
-				exit(1);
+				exit_clean(1);
 			}
 			break;
 		case 5: /* wsize */
@@ -663,7 +851,7 @@ int main(int argc, char **argv)
 			if (params.wsize < 0 || params.wsize>65535)
 			{
 				fprintf(stderr, "bad wsize\n");
-				exit(1);
+				exit_clean(1);
 			}
 			break;
 		case 6: /* hostcase */
@@ -673,7 +861,7 @@ int main(int argc, char **argv)
 			if (strlen(optarg) != 4)
 			{
 				fprintf(stderr, "hostspell must be exactly 4 chars long\n");
-				exit(1);
+				exit_clean(1);
 			}
 			params.hostcase = true;
 			memcpy(params.hostspell, optarg, 4);
@@ -690,7 +878,7 @@ int main(int argc, char **argv)
 			if (!params.desync_fwmark)
 			{
 				fprintf(stderr, "dpi-desync-fwmark should be decimal or 0xHEX and should not be zero\n");
-				exit(1);
+				exit_clean(1);
 			}
 			break;
 		case 11: /* dpi-desync-ttl */
@@ -706,13 +894,25 @@ int main(int argc, char **argv)
 			else
 			{
 				fprintf(stderr, "dpi-desync-fooling allowed values : none,md5sig,badsum\n");
-				exit(1);
+				exit_clean(1);
 			}
 			break;
 		case 13: /* dpi-desync-retrans */
 			params.desync_retrans = !!atoi(optarg);
 			break;
+		case 14: /* hostlist */
+			if (!LoadHostList(&params.hostlist, optarg))
+				exit_clean(1);
+			strncpy(params.hostfile,optarg,sizeof(params.hostfile));
+			params.hostfile[sizeof(params.hostfile)-1]='\0';
+			break;
 		}
+	}
+
+	if (!params.desync && params.hostlist)
+	{
+		fprintf(stderr, "hostlist is applicable only to dpi-desync\n");
+		exit_clean(1);
 	}
 
 	if (daemon) daemonize();
@@ -761,9 +961,12 @@ int main(int argc, char **argv)
 	if (!droproot(uid, gid)) goto exiterr;
 	fprintf(stderr, "Running as UID=%u GID=%u\n", getuid(), getgid());
 
+	signal(SIGHUP, onhup); 
+
 	fd = nfq_fd(h);
 	while ((rv = recv(fd, buf, sizeof(buf), 0)) && rv >= 0)
 	{
+		dohup();
 		int r = nfq_handle_packet(h, buf, rv);
 		if (r) fprintf(stderr, "nfq_handle_packet error %d\n", r);
 	}
@@ -781,10 +984,12 @@ int main(int argc, char **argv)
 	printf("closing library handle\n");
 	nfq_close(h);
 
+	cleanup_params();
 	return 0;
 
 exiterr:
 	if (qh) nfq_destroy_queue(qh);
 	if (h) nfq_close(h);
+	cleanup_params();
 	return 1;
 }

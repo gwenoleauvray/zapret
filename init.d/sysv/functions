@@ -17,8 +17,8 @@ NFQWS_OPT_BASE="--qnum=$QNUM --user=$WS_USER"
 TPPORT_HTTP=1188
 TPPORT_HTTPS=1189
 TPWS="$ZAPRET_BASE/tpws/tpws"
-TPWS_HOSTLIST="$ZAPRET_BASE/ipset/zapret-hosts.txt.gz"
-[ -f "$TPWS_HOSTLIST" ] || TPWS_HOSTLIST="$ZAPRET_BASE/ipset/zapret-hosts-user.txt"
+HOSTLIST="$ZAPRET_BASE/ipset/zapret-hosts.txt.gz"
+[ -f "$HOSTLIST" ] || HOSTLIST="$ZAPRET_BASE/ipset/zapret-hosts-user.txt"
 TPWS_OPT_BASE="--user=$WS_USER --bind-addr=127.0.0.1"
 TPWS_OPT_BASE6="--user=$WS_USER --bind-addr=::1"
 # first wait for lan to ifup, then wait for bind-wait-ip-linklocal seconds for link local address and bind-wait-ip for any ipv6 as the worst case
@@ -378,7 +378,7 @@ zapret_do_firewall()
 			fw_nfqws_pre $1 "$rule" "$rule" $QNUM
 			fw_nfqws_post $1 "--dport 80" "--dport 80" $QNUM
 			;;
-	    nfqws_all_desync)
+	    nfqws_all_desync|nfqws_hostlist_desync)
 			rule="-m multiport --sports 80,443 $synack"
 			fw_nfqws_pre $1 "$rule" "$rule" $QNUM
 			fw_nfqws_post $1 "$desync" "$desync" $QNUM
@@ -408,7 +408,7 @@ zapret_do_daemons()
 	
 	case "${MODE}" in
 	    tpws_hostlist)
-			do_tpws $1 1 "$TPWS_OPT_BASE_HTTP $TPWS_OPT_HTTP --hostlist=$TPWS_HOSTLIST"
+			do_tpws $1 1 "$TPWS_OPT_BASE_HTTP $TPWS_OPT_HTTP --hostlist=$HOSTLIST"
 			;;
 	    tpws_ipset|tpws_all)
 			do_tpws $1 1 "$TPWS_OPT_BASE_HTTP $TPWS_OPT_HTTP"
@@ -422,6 +422,9 @@ zapret_do_daemons()
 			;;
 	    nfqws_ipset_desync|nfqws_all_desync)
 			do_nfqws $1 1 "$NFQWS_OPT_DESYNC"
+			;;
+	    nfqws_hostlist_desync)
+			do_nfqws $1 1 "$NFQWS_OPT_DESYNC --hostlist=$HOSTLIST"
 			;;
 	    custom)
 	    		existf zapret_custom_daemons && zapret_custom_daemons $1

@@ -143,6 +143,7 @@ It takes the following parameters:
  --dpi-desync-ttl=<int>                 ; set ttl for desync packet
  --dpi-desync-fooling=none|md5sig|badsum
  --dpi-desync-retrans=0|1               ; 1=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first
+ --hostlist=<filename>                  ; apply dpi desync only to the listed hosts (one host per line, subdomains auto apply)
 
 The manipulation parameters can be combined in any way.
 
@@ -177,6 +178,9 @@ So there will be some delay at the beginning of each connection. Sites will load
 Unfortunately, if you send a fake packet right away, before the NFQUEUE verdict is issued on the original packet, there are no guarantees
 which packet will go first. Therefore, a delay is required, it is implemented through the retransmission mechanism.
 You can disable the drop of the original packet. Sometimes it works. But not very reliable.
+Its possible to avoid delays for most sites by using hostlist or ipset filter.
+
+Hostlist is applicable only to desync attack. It does not work for other options.
 
 iptables for performing the attack :
 
@@ -316,6 +320,7 @@ nfqws_all - use nfqws for all http
 nfqws_all_https - use nfqws for all http and https
 nfqws_all_desync - use nfqws for DPI desync attack on http и https for all http and https
 nfqws_ipset_desync - use nfqws for DPI desync attack on http и https for all http and https. targets are filtered by ipset "zapret"
+nfqws_hostlist_desync - use nfqws for DPI desync attack on http и https , only to hosts from hostlist
 
 tpws_ipset - use tpws for http. targets are filtered by ipset "zapret"
 tpws_ipset_https - use tpws for http and https. targets are filtered by ipset "zapret"
