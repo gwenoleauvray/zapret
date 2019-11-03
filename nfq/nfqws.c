@@ -249,6 +249,10 @@ static bool IsHttp(const char *data, size_t len)
 	}
 	return false;
 }
+static bool IsTLSClientHello(const char *data, size_t len)
+{
+	return len>=6 && data[0]==0x16 && data[5]==0x01 && (ntohs(*(uint16_t*)(data+3))+5)<=len;
+}
 
 // data/len points to data payload
 static bool modify_tcp_packet(uint8_t *data, size_t len, struct tcphdr *tcphdr)
@@ -295,22 +299,34 @@ static bool modify_tcp_packet(uint8_t *data, size_t len, struct tcphdr *tcphdr)
 static bool dpi_desync_packet(const uint8_t *data_pkt, size_t len_pkt, const struct iphdr *iphdr, const struct ip6_hdr *ip6hdr, const struct tcphdr *tcphdr, const uint8_t *data_payload, size_t len_payload)
 {
 	if (!!iphdr == !!ip6hdr) return false; // one and only one must be present
-	if (tcphdr->syn) return false;
 
-	struct sockaddr_storage src, dst;
-	extract_endpoints(iphdr, ip6hdr, tcphdr, &src, &dst);
-
-	if (len_payload)
+	if (!tcphdr->syn && len_payload)
 	{
+		struct sockaddr_storage src, dst;
+		const uint8_t *fake;
+		size_t fake_size;
+
+		if (IsHttp(data_payload,len_payload)) 
+		{
+			printf("packet contains HTTP request\n");
+			fake = (uint8_t*)fake_http_request;
+			fake_size = sizeof(fake_http_request);
+		}
+		else if (IsTLSClientHello(data_payload,len_payload))
+		{
+			printf("packet contains TLS ClientHello\n");
+			fake = (uint8_t*)fake_https_request;
+			fake_size = sizeof(fake_https_request);
+		}
+		else
+			return false;
+
+		extract_endpoints(iphdr, ip6hdr, tcphdr, &src, &dst);
 		printf("sending dpi desync packet src=");
 		print_sockaddr((struct sockaddr *)&src);
 		printf(" dst=");
 		print_sockaddr((struct sockaddr *)&dst);
 		printf("\n");
-
-		bool bIsHttp = IsHttp(data_payload,len_payload);
-		const uint8_t *fake = bIsHttp ? (uint8_t*)fake_http_request : fake_https_request;
-		size_t fake_size = bIsHttp ? sizeof(fake_http_request) : sizeof(fake_https_request);
 
 		uint8_t newdata[1500];
 		size_t newlen = sizeof(newdata);
