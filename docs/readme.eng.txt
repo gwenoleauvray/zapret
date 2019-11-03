@@ -181,6 +181,8 @@ You can disable the drop of the original packet. Sometimes it works. But not ver
 Its possible to avoid delays for most sites by using hostlist or ipset filter.
 
 Hostlist is applicable only to desync attack. It does not work for other options.
+Hosts are extracted from plain http request Host: header and SNI of ClientHelllo TLS message.
+Subdomains are applied automatically.
 
 iptables for performing the attack :
 
