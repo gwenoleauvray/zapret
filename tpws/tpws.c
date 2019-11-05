@@ -20,7 +20,6 @@
 #include <netinet/tcp.h>
 #include <getopt.h>
 #include <pwd.h>
-#include <signal.h>
 #include <sys/capability.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
@@ -124,7 +123,7 @@ void exithelp()
 		" --pidfile=<filename>\t\t; write pid to file\n"
 		" --user=<username>\t\t; drop root privs\n"
 		" --uid=uid[:gid]\t\t; drop root privs\n"
-		" --debug\t\t\t; print debug messages\n"
+		" --debug=0|1|2\t\t\t; 0(default)=silent 1=verbose 2=debug\n"
 		"\nTAMPERING:\n"
 		" --hostlist=<filename>\t\t; only act on host in the list (one host per line, subdomains auto apply)\n"
 		" --split-http-req=method|host\n"
@@ -196,7 +195,7 @@ void parse_params(int argc, char *argv[])
 		{ "unixeol",no_argument,0,0 },// optidx=24
 		{ "hostlist",required_argument,0,0 },// optidx=25
 		{ "pidfile",required_argument,0,0 },// optidx=26
-		{ "debug",no_argument,0,0 },// optidx=27
+		{ "debug",optional_argument,0,0 },// optidx=27
 		{ "local-rcvbuf",required_argument,0,0 },// optidx=28
 		{ "local-sndbuf",required_argument,0,0 },// optidx=29
 		{ "remote-rcvbuf",required_argument,0,0 },// optidx=30
@@ -365,7 +364,7 @@ void parse_params(int argc, char *argv[])
 			params.pidfile[sizeof(params.pidfile)-1]='\0';
 			break;
 		case 27:
-			params.debug = true;
+			params.debug = optarg ? atoi(optarg) : 1;
 			break;
 		case 28: /* local-rcvbuf */
 			params.local_rcvbuf = atoi(optarg)/2;
@@ -581,17 +580,17 @@ bool set_ulimit()
 	fdmax += fdmax/3 + 16;
 	int fdmin_system = fdmax + 4096;
 
-	DBGPRINT("set_ulimit : fdmax=%d fdmin_system=%d",fdmax,fdmin_system);
+	DBGPRINT("set_ulimit : fdmax=%d fdmin_system=%d",fdmax,fdmin_system)
 
 	if (!(F=fopen("/proc/sys/fs/file-max","r")))
 		return false;
 	n=fscanf(F,"%d",&cur_lim);
 	fclose(F);
 	if (!n)	return false;
-	DBGPRINT("set_ulimit : current system file-max=%d",cur_lim);
+	DBGPRINT("set_ulimit : current system file-max=%d",cur_lim)
 	if (cur_lim<fdmin_system)
 	{
-		DBGPRINT("set_ulimit : system fd limit is too low. trying to increase");
+		DBGPRINT("set_ulimit : system fd limit is too low. trying to increase")
 		if (!(F=fopen("/proc/sys/fs/file-max","w")))
 		{
 			fprintf(stderr,"set_ulimit : could not open /proc/sys/fs/file-max for write\n");

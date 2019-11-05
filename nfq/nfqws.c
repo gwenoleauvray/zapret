@@ -67,11 +67,12 @@ static const uint8_t fake_https_request[] = {
 
 struct params_s
 {
+	bool debug;
 	int wsize;
 	int qnum;
 	bool hostcase, hostnospace;
 	char hostspell[4];
-	bool desync,desync_retrans;
+	bool desync,desync_retrans,desync_skip_nosni;
 	uint8_t desync_ttl;
 	enum tcp_fooling_mode desync_tcp_fooling_mode;
 	uint32_t desync_fwmark;
@@ -81,6 +82,7 @@ struct params_s
 
 static struct params_s params;
 
+#define DLOG(format, ...) {if (params.debug) printf(format, ##__VA_ARGS__);}
 
 
 static bool bHup = false;
@@ -275,7 +277,7 @@ static void tcp_rewrite_winsize(struct tcphdr *tcp, uint16_t winsize)
 	*/
 	winsize_old = htons(tcp->window); // << scale_factor;
 	tcp->window = htons(winsize);
-	printf("Window size change %u => %u\n", winsize_old, winsize);
+	DLOG("Window size change %u => %u\n", winsize_old, winsize)
 }
 
 
@@ -422,13 +424,13 @@ static bool modify_tcp_packet(uint8_t *data, size_t len, struct tcphdr *tcphdr)
 	{
 		if (params.hostcase)
 		{
-			printf("modifying Host: => %c%c%c%c:\n", params.hostspell[0], params.hostspell[1], params.hostspell[2], params.hostspell[3]);
+			DLOG("modifying Host: => %c%c%c%c:\n", params.hostspell[0], params.hostspell[1], params.hostspell[2], params.hostspell[3])
 			memcpy(phost + 2, params.hostspell, 4);
 			bRet = true;
 		}
 		if (params.hostnospace && (pua = find_bin(data, len, "\r\nUser-Agent: ", 14)) && (pua = find_bin(pua + 1, len - (pua - data) - 1, "\r\n", 2)))
 		{
-			printf("removing space after Host: and adding it to User-Agent:\n");
+			DLOG("removing space after Host: and adding it to User-Agent:\n")
 			if (pua > phost)
 			{
 				memmove(phost + 7, phost + 8, pua - phost - 8);
@@ -462,38 +464,49 @@ static bool dpi_desync_packet(const uint8_t *data_pkt, size_t len_pkt, const str
 
 		if (IsHttp(data_payload,len_payload)) 
 		{
-			printf("packet contains HTTP request\n");
+			DLOG("packet contains HTTP request\n")
 			fake = (uint8_t*)fake_http_request;
 			fake_size = sizeof(fake_http_request);
-			if (params.hostlist) bHaveHost=HttpExtractHost(data_payload,len_payload,host,sizeof(host));
+			if (params.hostlist || params.debug) bHaveHost=HttpExtractHost(data_payload,len_payload,host,sizeof(host));
 		}
 		else if (IsTLSClientHello(data_payload,len_payload))
 		{
-			printf("packet contains TLS ClientHello\n");
+			DLOG("packet contains TLS ClientHello\n")
 			fake = (uint8_t*)fake_https_request;
 			fake_size = sizeof(fake_https_request);
-			if (params.hostlist) bHaveHost=TLSHelloExtractHost(data_payload,len_payload,host,sizeof(host));
+			if (params.hostlist || params.desync_skip_nosni || params.debug)
+			{
+				bHaveHost=TLSHelloExtractHost(data_payload,len_payload,host,sizeof(host));
+				if (params.desync_skip_nosni && !bHaveHost)
+				{
+					DLOG("Not applying dpi-desync to TLS ClientHello without hostname in the SNI\n")
+					return false;
+				}
+			}
+			
 		}
 		else
 			return false;
 
 		if (bHaveHost)
 		{
-
-			if (!SearchHostList(params.hostlist,host))
+			DLOG("hostname: %s\n",host)
+			if (params.hostlist && !SearchHostList(params.hostlist,host,params.debug))
 			{
-				printf("Not applying dpi-desync to this request\n");
+				DLOG("Not applying dpi-desync to this request\n")
 				return false;
 			}
 		}
 
-
 		extract_endpoints(iphdr, ip6hdr, tcphdr, &src, &dst);
-		printf("sending dpi desync packet src=");
-		print_sockaddr((struct sockaddr *)&src);
-		printf(" dst=");
-		print_sockaddr((struct sockaddr *)&dst);
-		printf("\n");
+		if (params.debug)
+		{
+			printf("sending dpi desync packet src=");
+			print_sockaddr((struct sockaddr *)&src);
+			printf(" dst=");
+			print_sockaddr((struct sockaddr *)&dst);
+			printf("\n");
+		}
 
 		uint8_t newdata[1500];
 		size_t newlen = sizeof(newdata);
@@ -506,7 +519,7 @@ static bool dpi_desync_packet(const uint8_t *data_pkt, size_t len_pkt, const str
 
 		if (params.desync_retrans)
 		{
-			printf("dropping packet to force retransmission. len=%zu len_payload=%zu\n", len_pkt, len_payload);
+			DLOG("dropping packet to force retransmission. len=%zu len_payload=%zu\n", len_pkt, len_payload)
 			return true;
 		}
 	}
@@ -552,7 +565,7 @@ static packet_process_result processPacketData(uint8_t *data_pkt, size_t len_pkt
 		tcphdr = (struct tcphdr *) data;
 		len_tcp = len;
 		proto_skip_tcp(&data, &len);
-		//printf("got TCP packet. payload_len=%d\n",len);
+		//DLOG("got TCP packet. payload_len=%d\n",len)
 
 		if (params.desync && !(*mark & params.desync_fwmark))
 		{
@@ -586,7 +599,7 @@ static int cb(struct nfq_q_handle *qh, struct nfgenmsg *nfmsg,
 
 	uint32_t mark = nfq_get_nfmark(nfa);
 	len = nfq_get_payload(nfa, &data);
-	printf("packet: id=%d len=%zu\n", id, len);
+	DLOG("packet: id=%d len=%zu\n", id, len)
 	if (len >= 0)
 	{
 		switch (processPacketData(data, len, &mark))
@@ -725,6 +738,7 @@ static bool writepid(const char *filename)
 static void exithelp()
 {
 	printf(
+		" --debug=0|1\n"
 		" --qnum=<nfqueue_number>\n"
 		" --daemon\t\t\t\t; daemonize\n"
 		" --pidfile=<filename>\t\t\t; write pid to file\n"
@@ -738,7 +752,8 @@ static void exithelp()
 		" --dpi-desync-fwmark=<int|0xHEX>\t; override fwmark for desync packet. default = 0x%08X\n"
 		" --dpi-desync-ttl=<int>\t\t\t; set ttl for desync packet\n"
 		" --dpi-desync-fooling=none|md5sig|badsum\n"
-		" --dpi-desync-retrans=0|1\t\t; 1=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first\n"
+		" --dpi-desync-retrans=0|1\t\t; 1(default)=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first\n"
+		" --dpi-desync-skip-nosni=0|1\t\t; 1(default)=do not act on ClientHello without SNI (ESNI ?)\n"
 		" --hostlist=<filename>\t\t\t; apply dpi desync only to the listed hosts (one host per line, subdomains auto apply)\n",
 		DPI_DESYNC_FWMARK_DEFAULT
 	);
@@ -786,23 +801,26 @@ int main(int argc, char **argv)
 
 	params.desync_fwmark = DPI_DESYNC_FWMARK_DEFAULT;
 	params.desync_retrans = true;
+	params.desync_skip_nosni = true;
 
 	const struct option long_options[] = {
-		{"qnum",required_argument,0,0},	// optidx=0
-		{"daemon",no_argument,0,0},		// optidx=1
-		{"pidfile",required_argument,0,0},	// optidx=2
-		{"user",required_argument,0,0 },// optidx=3
-		{"uid",required_argument,0,0 },// optidx=4
-		{"wsize",required_argument,0,0},	// optidx=5
-		{"hostcase",no_argument,0,0},	// optidx=6
-		{"hostspell",required_argument,0,0}, // optidx=7
-		{"hostnospace",no_argument,0,0},	// optidx=8
-		{"dpi-desync",no_argument,0,0},	// optidx=9
-		{"dpi-desync-fwmark",required_argument,0,0},	// optidx=10
-		{"dpi-desync-ttl",required_argument,0,0},	// optidx=11
-		{"dpi-desync-fooling",required_argument,0,0},	// optidx=12
-		{"dpi-desync-retrans",required_argument,0,0},	// optidx=13
-		{"hostlist",required_argument,0,0},		// optidx=14
+		{"debug",optional_argument,0,0},	// optidx=0
+		{"qnum",required_argument,0,0},		// optidx=1
+		{"daemon",no_argument,0,0},		// optidx=2
+		{"pidfile",required_argument,0,0},	// optidx=3
+		{"user",required_argument,0,0 },	// optidx=4
+		{"uid",required_argument,0,0 },		// optidx=5
+		{"wsize",required_argument,0,0},	// optidx=6
+		{"hostcase",no_argument,0,0},		// optidx=7
+		{"hostspell",required_argument,0,0},	// optidx=8
+		{"hostnospace",no_argument,0,0},	// optidx=9
+		{"dpi-desync",no_argument,0,0},		// optidx=10
+		{"dpi-desync-fwmark",required_argument,0,0},	// optidx=11
+		{"dpi-desync-ttl",required_argument,0,0},	// optidx=12
+		{"dpi-desync-fooling",required_argument,0,0},	// optidx=13
+		{"dpi-desync-retrans",optional_argument,0,0},	// optidx=14
+		{"dpi-desync-skip-nosni",optional_argument,0,0},// optidx=15
+		{"hostlist",required_argument,0,0},		// optidx=16
 		{NULL,0,NULL,0}
 	};
 	if (argc < 2) exithelp();
@@ -811,7 +829,10 @@ int main(int argc, char **argv)
 		if (v) exithelp();
 		switch (option_index)
 		{
-		case 0: /* qnum */
+		case 0: /* debug */
+			params.debug = !optarg || atoi(optarg);
+			break;
+		case 1: /* qnum */
 			params.qnum = atoi(optarg);
 			if (params.qnum < 0 || params.qnum>65535)
 			{
@@ -819,14 +840,14 @@ int main(int argc, char **argv)
 				exit_clean(1);
 			}
 			break;
-		case 1: /* daemon */
+		case 2: /* daemon */
 			daemon = true;
 			break;
-		case 2: /* pidfile */
+		case 3: /* pidfile */
 			strncpy(pidfile, optarg, sizeof(pidfile));
 			pidfile[sizeof(pidfile) - 1] = '\0';
 			break;
-		case 3: /* user */
+		case 4: /* user */
 		{
 			struct passwd *pwd = getpwnam(optarg);
 			if (!pwd)
@@ -838,7 +859,7 @@ int main(int argc, char **argv)
 			gid = pwd->pw_gid;
 			break;
 		}
-		case 4: /* uid */
+		case 5: /* uid */
 			gid = 0x7FFFFFFF; // default git. drop gid=0
 			if (!sscanf(optarg, "%u:%u", &uid, &gid))
 			{
@@ -846,7 +867,7 @@ int main(int argc, char **argv)
 				exit_clean(1);
 			}
 			break;
-		case 5: /* wsize */
+		case 6: /* wsize */
 			params.wsize = atoi(optarg);
 			if (params.wsize < 0 || params.wsize>65535)
 			{
@@ -854,10 +875,10 @@ int main(int argc, char **argv)
 				exit_clean(1);
 			}
 			break;
-		case 6: /* hostcase */
+		case 7: /* hostcase */
 			params.hostcase = true;
 			break;
-		case 7: /* hostspell */
+		case 8: /* hostspell */
 			if (strlen(optarg) != 4)
 			{
 				fprintf(stderr, "hostspell must be exactly 4 chars long\n");
@@ -866,13 +887,13 @@ int main(int argc, char **argv)
 			params.hostcase = true;
 			memcpy(params.hostspell, optarg, 4);
 			break;
-		case 8: /* hostnospace */
+		case 9: /* hostnospace */
 			params.hostnospace = true;
 			break;
-		case 9: /* dpi-desync */
+		case 10: /* dpi-desync */
 			params.desync = true;
 			break;
-		case 10: /* dpi-desync */
+		case 11: /* dpi-desync */
 			params.desync_fwmark = 0;
 			if (!sscanf(optarg, "0x%X", &params.desync_fwmark)) sscanf(optarg, "%u", &params.desync_fwmark);
 			if (!params.desync_fwmark)
@@ -881,10 +902,10 @@ int main(int argc, char **argv)
 				exit_clean(1);
 			}
 			break;
-		case 11: /* dpi-desync-ttl */
+		case 12: /* dpi-desync-ttl */
 			params.desync_ttl = (uint8_t)atoi(optarg);
 			break;
-		case 12: /* dpi-desync-fooling */
+		case 13: /* dpi-desync-fooling */
 			if (!strcmp(optarg,"none"))
 				params.desync_tcp_fooling_mode = TCP_FOOL_NONE;
 			else if (!strcmp(optarg,"md5sig"))
@@ -897,10 +918,13 @@ int main(int argc, char **argv)
 				exit_clean(1);
 			}
 			break;
-		case 13: /* dpi-desync-retrans */
-			params.desync_retrans = !!atoi(optarg);
+		case 14: /* dpi-desync-retrans */
+			params.desync_retrans = !optarg || atoi(optarg);
 			break;
-		case 14: /* hostlist */
+		case 15: /* dpi-desync-skip-nosni */
+			params.desync_skip_nosni = !optarg || atoi(optarg);
+			break;
+		case 16: /* hostlist */
 			if (!LoadHostList(&params.hostlist, optarg))
 				exit_clean(1);
 			strncpy(params.hostfile,optarg,sizeof(params.hostfile));

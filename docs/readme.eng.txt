@@ -129,6 +129,7 @@ nfqws
 This program is a packet modifier and a NFQUEUE queue handler.
 It takes the following parameters:
 
+ --debug=0|1				; 1=print debug info
  --qnum=<nfqueue_number>
  --wsize=<window_size> 			; set window size. 0 = do not modify
  --hostcase           			; change Host: => host:
@@ -142,7 +143,8 @@ It takes the following parameters:
  --dpi-desync-fwmark=<int|0xHEX>        ; override fwmark for desync packet. default = 0x40000000
  --dpi-desync-ttl=<int>                 ; set ttl for desync packet
  --dpi-desync-fooling=none|md5sig|badsum
- --dpi-desync-retrans=0|1               ; 1=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first
+ --dpi-desync-retrans=0|1               ; 1(default)=drop original data packet to force its retransmission. this adds delay to make sure desync packet goes first
+ --dpi-desync-skip-nosni=0|1		; 1(default)=do not apply desync to requests without hostname in the SNI
  --hostlist=<filename>                  ; apply dpi desync only to the listed hosts (one host per line, subdomains auto apply)
 
 The manipulation parameters can be combined in any way.
@@ -196,6 +198,7 @@ tpws
 
 tpws is transparent proxy.
 
+ --debug=0|1|2			; 0(default)=silent 1=verbose 2=debug
  --bind-addr=<ipv4_addr>|<ipv6_addr>
  --bind-iface4=<interface_name> ; bind to the first ipv4 addr of interface
  --bind-iface6=<interface_name> ; bind to the first ipv6 addr of interface

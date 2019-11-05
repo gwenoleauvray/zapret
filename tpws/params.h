@@ -1,7 +1,7 @@
 #pragma once
 
-#include <stdbool.h>
 #include <net/if.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include "strpool.h"
 
@@ -33,9 +33,11 @@ struct params_s
 	char pidfile[256];
 	strpool *hostlist;
 
-	bool debug;
+	int debug;
 };
 
 extern struct params_s params;
 
-#define DBGPRINT(format, ...) { if (params.debug) printf(format "\n", ##__VA_ARGS__); }
+#define _DBGPRINT(format, level, ...) { if (params.debug>=level) printf(format "\n", ##__VA_ARGS__); }
+#define VPRINT(format, ...) _DBGPRINT(format,1,##__VA_ARGS__)
+#define DBGPRINT(format, ...) _DBGPRINT(format,2,##__VA_ARGS__)

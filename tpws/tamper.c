@@ -1,5 +1,6 @@
 #include "tamper.h"
 #include "params.h"
+#include "hostlist.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -24,7 +25,7 @@ bool find_host(char **pHost,char *buf,size_t bs)
 		if (*pHost)
 		{
 			(*pHost)++;
-			printf("Found Host: at pos %zu\n",*pHost - buf);
+			VPRINT("Found Host: at pos %zu",*pHost - buf)
 		}
 	}
 	return !!*pHost;
@@ -54,29 +55,19 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 	}
 	if (bIsHttp)
 	{
-		printf("Data block looks like http request start : %s\n", *method);
+		VPRINT("Data block looks like http request start : %s", *method)
 		// cpu saving : we search host only if and when required. we do not research host every time we need its position
 		if (params.hostlist && find_host(&pHost,segment,*size))
 		{
-			bool bInHostList = false;
 			p = pHost + 5;
 			while (p < (segment + *size) && (*p == ' ' || *p == '\t')) p++;
 			pp = p;
 			while (pp < (segment + *size) && (pp - p) < (sizeof(Host) - 1) && *pp != '\r' && *pp != '\n') pp++;
 			memcpy(Host, p, pp - p);
 			Host[pp - p] = '\0';
-			printf("Requested Host is : %s\n", Host);
+			VPRINT("Requested Host is : %s", Host)
 			for(p = Host; *p; p++) *p=tolower(*p);
-			p = Host;
-			while (p)
-			{
-				bInHostList = StrPoolCheckStr(params.hostlist, p);
-				printf("Hostlist check for %s : %s\n", p, bInHostList ? "positive" : "negative");
-				if (bInHostList) break;
-				p = strchr(p, '.');
-				if (p) p++;
-			}
-			bBypass = !bInHostList;
+			bBypass = !SearchHostList(params.hostlist,Host);
 		}
 		if (!bBypass)
 		{
@@ -91,7 +82,7 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 					if (pp == (p - 1))
 					{
 						// probably end of http headers
-						printf("Found double EOL at pos %zu. Stop replacing.\n", pp - segment);
+						VPRINT("Found double EOL at pos %zu. Stop replacing.", pp - segment)
 						break;
 					}
 					pp = p;
@@ -100,7 +91,7 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 			}
 			if (params.methodeol && (*size+1+!params.unixeol)<=segment_buffer_size)
 			{
-				printf("Adding EOL before method\n");
+				VPRINT("Adding EOL before method")
 				if (params.unixeol)
 				{
 					memmove(segment + 1, segment, *size);
@@ -121,7 +112,7 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 			if (params.methodspace && *size<segment_buffer_size)
 			{
 				// we only work with data blocks looking as HTTP query, so method is at the beginning
-				printf("Adding extra space after method\n");
+				VPRINT("Adding extra space after method")
 				p = segment + method_len + 1;
 				pos = method_len + 1;
 				memmove(p + 1, p, *size - pos);
@@ -136,7 +127,7 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 				if (p < (segment + *size))
 				{
 					pos = p - segment;
-					printf("Adding %s to host name at pos %zu\n", params.hostdot ? "dot" : "tab", pos);
+					VPRINT("Adding %s to host name at pos %zu", params.hostdot ? "dot" : "tab", pos)
 					memmove(p + 1, p, *size - pos);
 					*p = params.hostdot ? '.' : '\t'; // insert dot or tab
 					(*size)++; // block will grow by 1 byte
@@ -146,14 +137,14 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 			{
 				p = pHost + 6;
 				pos = p - segment;
-				printf("Removing space before host name at pos %zu\n", pos);
+				VPRINT("Removing space before host name at pos %zu", pos)
 				memmove(p - 1, p, *size - pos);
 				(*size)--; // block will shrink by 1 byte
 				bRemovedHostSpace = 1;
 			}
 			if (params.hostcase && find_host(&pHost,segment,*size))
 			{
-				printf("Changing 'Host:' => '%c%c%c%c:' at pos %zu\n", params.hostspell[0], params.hostspell[1], params.hostspell[2], params.hostspell[3], pHost - segment);
+				VPRINT("Changing 'Host:' => '%c%c%c%c:' at pos %zu", params.hostspell[0], params.hostspell[1], params.hostspell[2], params.hostspell[3], pHost - segment)
 				memcpy(pHost, params.hostspell, 4);
 			}
 			if (params.hostpad && find_host(&pHost,segment,*size))
@@ -164,16 +155,16 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 				size_t hostpad = params.hostpad<hsize ? hsize : params.hostpad;
 
 				if ((hsize+*size)>segment_buffer_size)
-					printf("could not add host padding : buffer too small\n");
+					VPRINT("could not add host padding : buffer too small")
 				else
 				{
 					if ((hostpad+*size)>segment_buffer_size)
 					{
 						hostpad=segment_buffer_size-*size;
-						printf("host padding reduced to %zu bytes : buffer too small\n", hostpad);
+						VPRINT("host padding reduced to %zu bytes : buffer too small", hostpad)
 					}
 					else
-						printf("host padding with %zu bytes\n", hostpad);
+						VPRINT("host padding with %zu bytes", hostpad)
 					
 					p = pHost;
 					pos = p - segment;
@@ -220,7 +211,7 @@ void modify_tcp_segment(char *segment,size_t segment_buffer_size,size_t *size,si
 		}
 		else
 		{
-			printf("Not acting on this request\n");
+			VPRINT("Not acting on this request")
 		}
 	}
 	else
