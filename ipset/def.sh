@@ -55,7 +55,13 @@ digger()
  # $2 - family (4|6)
  >&2 echo digging $(wc -l <"$1") ipv$2 domains : "$1"
 
- zzcat "$1" | "$MDIG" --family=$2 --threads=$MDIG_THREADS --stats=1000
+ if [ -x "$MDIG" ]; then
+  zzcat "$1" | "$MDIG" --family=$2 --threads=$MDIG_THREADS --stats=1000
+ else
+  local A=A
+  [ "$2" = "6" ] && A=AAAA
+  zzcat "$1" | dig $A +short +time=8 +tries=2 -f - | grep -E '^[^;].*[^\.]$'
+ fi
 }
 
 cut_local()
@@ -67,9 +73,16 @@ cut_local6()
   grep -vE '^::|fc..:|fd..:'
 }
 
+oom_adjust_high()
+{
+	echo setting high oom kill priority
+	echo -n 100 >/proc/$$/oom_score_adj
+}
 
 getexclude()
 {
+ oom_adjust_high
+
  [ -f "$ZUSERLIST_EXCLUDE" ] && {
   [ "$DISABLE_IPV4" != "1" ] && digger "$ZUSERLIST_EXCLUDE" 4 | sort -u > "$ZIPLIST_EXCLUDE"
   [ "$DISABLE_IPV6" != "1" ] && digger "$ZUSERLIST_EXCLUDE" 6 | sort -u > "$ZIPLIST_EXCLUDE6"
@@ -78,6 +91,7 @@ getexclude()
 
 getuser()
 {
+ getexclude
  [ -f "$ZUSERLIST" ] && {
   [ "$DISABLE_IPV4" != "1" ] && digger "$ZUSERLIST" 4 | cut_local | sort -u > "$ZIPLIST_USER"
   [ "$DISABLE_IPV6" != "1" ] && digger "$ZUSERLIST" 6 | cut_local6 | sort -u > "$ZIPLIST_USER6"
@@ -86,6 +100,4 @@ getuser()
   [ "$DISABLE_IPV4" != "1" ] && digger "$ZUSERLIST_IPBAN" 4 | cut_local | sort -u > "$ZIPLIST_USER_IPBAN"
   [ "$DISABLE_IPV6" != "1" ] && digger "$ZUSERLIST_IPBAN" 6 | cut_local6 | sort -u > "$ZIPLIST_USER_IPBAN6"
  }
- getexclude
 }
-

@@ -118,6 +118,8 @@ create_ipset()
  return 0
 }
 
+oom_adjust_high
+
 # ipset seem to buffer the whole script to memory
 # on low RAM system this can cause oom errors
 # in SAVERAM mode we feed script lines in portions starting from the end, while truncating source file to free /tmp space

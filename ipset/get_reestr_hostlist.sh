@@ -5,6 +5,8 @@ EXEDIR=$(dirname "$SCRIPT")
 
 . "$EXEDIR/def.sh"
 
+getexclude
+
 ZREESTR="$TMPDIR/zapret.txt"
 #ZURL=https://reestr.rublacklist.net/api/current
 ZURL=https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv
