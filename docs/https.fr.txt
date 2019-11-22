@@ -1,0 +1,159 @@
+Je vais vous dire comment j'ai résolu le problème du blocage de https sur le routeur.
+Sur les fournisseurs mis à ma disposition, tout le monde sauf un a banni https par IP (il n'y a pas de connexion du tout) ou a capturé une session TLS et cela a été bloqué - les paquets ne sont plus venus. Sur domra, j'ai réussi à découvrir que DPI adhérait à SNI (Indication du nom du serveur) dans TLS, mais diviser la demande TLS n'a pas aidé. Je suis arrivé à la conclusion que https serait plus judicieux d'envelopper de manière transparente dans des chaussettes.
+Tor prend en charge le mode proxy transparent prêt à l'emploi. Ceci peut être utilisé en théorie, mais en pratique - uniquement sur les routeurs de 128 Mo de mémoire ou plus. Il n'y a pas beaucoup de tels routeurs. Fondamentalement, la mémoire est de 32 ou 64 Mo. Et le tore est aussi frein.
+Une autre option se suggère si vous avez accès à un système unix avec SSH, où les sites ne sont pas bloqués. Par exemple, vous avez un VPS en dehors de la Russie. C'est exactement ce qu'il a fait.
+Les étapes suivantes sont conceptuellement requises:
+1) Allouer l’adresse IP à laquelle le trafic doit être envoyé par proxy. Nous avons déjà ipset "zapret", dont la technologie a été développée.
+2) Assurez-vous que tout le temps quand le système démarre sur certaines chaussettes de port se produit.
+3) Installez le sockifier transparent. Redsocks convenait parfaitement à ce rôle.
+4) Enveloppez le trafic via iptables depuis le port de destination 443 et vers les adresses ip depuis ipset 'zapret' vers le sockifier
+Je considérerai un système basé sur openwrt, où le système de contournement de dpi "zapret" est déjà installé.
+À tout le moins, vous devez disposer d'un ipset 'zapret', l'installation de tpws ou nfqws n'étant pas nécessaire.
+De plus, s’ils ne fonctionnent pas sur votre système, vous pouvez non seulement utiliser https, mais également http.
+
+* Assurez-vous que tout le temps quand le système démarre sur des chaussettes de port
+
+Parce que Étant donné que le client dropbear par défaut ne prend pas en charge la création de chaussettes, vous devrez d'abord remplacer le client ssh de dropbear par openssh: les packages openssh-client et openssh-client-utils.
+Vous devez les installer avec l'option opkg --force-overwrite, car ils réécrivent le client ssh à partir de dropbear.
+Après l’installation des paquets, nous relâchons les droits déraisonnablement brutaux: chmod 755 / etc / ssh.
+Vous devez créer un utilisateur sous lequel nous allons tordre le client ssh. Disons que ce sera un "proxy".
+Installez d'abord le paquet shadow-useradd.
+------------------
+useradd -d / home / proxy proxy
+mkdir -p / home / proxy
+proxy chown: proxy / home / proxy
+------------------
+Openssh corrige différents problèmes s'il n'a pas accès à / dev / tty.
+Ajoutez la ligne dans /etc/rc.local: "chmod 666 / dev / tty"
+Nous allons générer une clé RSA pour accéder au serveur ssh.
+------------------
+su proxy
+cd
+mkdir -m 700 .ssh
+cd .ssh
+ssh-keygen
+ls
+exit
+------------------
+Vous devriez obtenir les fichiers id_rsa et id_rsa.pub.
+La ligne de id_rsa.pub doit être ajoutée au serveur ssh dans le fichier $ HOME / .ssh / registered_keys.
+Plus en détail sur l'accès à ssh via l'autorisation de clé: https://beget.com/fr/articles/ssh_by_key
+Supposons que votre serveur ssh soit vps.mydomain.com, l'utilisateur s'appelle 'proxy'.
+Vous pouvez vérifier la connexion comme suit: ssh -N -D 1098 -l proxy vps.mydomain.com.
+Faites cela sous l'utilisateur "proxy", car lors de votre première connexion, ssh vous demandera si hostkey est correct.
+La connexion peut tomber à tout moment, vous devez donc utiliser ssh en boucle pour démarrer.
+Pour ce faire, la meilleure option consiste à utiliser procd, un remplacement simplifié de systemd avec les versions openwrt BB et supérieures.
+--- /etc/init.d/socks_vps ---
+#! / bin / sh /etc/rc.common
+START = 50
+STOP = 50
+USE_PROCD = 1
+USERNAME = proxy
+COMMAND = "ssh -N -D 1098 -l proxy vps.mydomain.com"
+start_service () {
+    procd_open_instance
+    procd_set_param utilisateur $ USERNAME
+    procd_set_param respawn 10 10 0
+    procd_set_param commande $ COMMAND
+    procd_close_instance
+}
+-----------------------------
+Ce fichier doit recevoir des autorisations: chmod + x /etc/init.d/socks_vps
+Lancer: /etc/init.d/socks_vps start
+Stop: /etc/init.d/socks_vps stop
+Activer le chargement automatique: /etc/init.d/socks_vps enable
+Vérifier: curl -4 --socks5 127.0.0.1:1098 https://rutracker.org
+
+* Organiser une co-ratification transparente
+
+Installez le paquetage redsocks.
+Config:
+- /etc/redsocks.conf: ---
+base {
+log_debug = off;
+log_info = on;
+log = "syslog: local7";
+daemon = on;
+utilisateur = personne;
+group = nogroup;
+redirecteur = iptables;
+}
+redsocks {
+        local_ip = 127.0.0.1;
+        local_port = 1099;
+        ip = 127.0.0.1;
+        port = 1098;
+        type = chaussettes5;
+}
+---------------------------
+Puis redémarrez: /etc/init.d/redsocks restart
+Voir si l'auditeur est apparu: netstat -tnlp | grep 1099
+Le démarrage automatique des redsocks avec cette configuration ne fonctionne pas, car au moment du lancement, le réseau n’est pas initialisé et nous n’avons même pas 127.0.0.1.
+Au lieu d’un démarrage automatique régulier, nous nous accrocherons aux événements de relance d’interface. Nous analyserons cela plus tard.
+Pour l'instant, désactivez le démarrage automatique: /etc/init.d/redsocks disable
+
+* Enveloppant les connexions via iptables
+
+Nous allons envelopper toutes les connexions TCP sur ip depuis ipset "ipban" et https sur ip depuis ipset "zapret".
+
+--- /etc/firewall.user -----
+SOXIFIER_PORT = 1099
+
+. /opt/zapret/init.d/openwrt/functions
+
+create_ipset no-update
+
+for ext_iface in $wan_iface; do
+    network_get_device ext_device $ext_iface
+    ipt OUTPUT -t nat -o $ext_device -p tcp --dport 443 -m set --match-set zapret dst -j REDIRECT --to-port $SOXIFIER_PORT
+    ipt OUTPUT -t nat -o $ext_device -p tcp -m set --match-set ipban dst -j REDIRECT --to-port $SOXIFIER_PORT
+done
+
+network_get_device DEVICE lan
+sysctl -w net.ipv4.conf.$DEVICE.route_localnet=1
+ipt prerouting_lan_rule -t nat -p tcp --dport 443 -m set --match-set zapret dst -j DNAT --to 127.0.0.1:$SOXIFIER_PORT
+ipt prerouting_lan_rule -t nat -p tcp -m set --match-set ipban dst -j DNAT --to 127.0.0.1:$SOXIFIER_PORT
+----------------------------
+
+
+Ajoutez le paramètre "reload" à l'emplacement spécifié:
+--- / etc / config / pare-feu ---
+config comprennent
+        chemin d'option '/etc/firewall.user'
+        option recharger '1'
+----------------------------
+
+Redémarrer: /etc/init.d/firewall restart
+Tout, maintenant vous pouvez vérifier:
+/etc/init.d/redsocks stop
+curl -4 https://rutracker.org
+# devrait rompre avec l'inscription "Connexion refusée". si elle ne se sépare pas, alors l'adresse IP de rutracker.org n'est pas dans ipset,
+# soit les règles du pare-feu ne fonctionnaient pas. par exemple, les modules ipt n'étant pas installés
+/etc/init.d/redsocks start
+curl -4 https://rutracker.org
+# devrait produire une page
+
+* Redsocks Autostart
+
+J'ai fait un petit script pour moi-même, suspendu aux événements de montée et de descente des interfaces.
+
+--- /etc/hotplug.d/iface/99-exec-on-updown ---
+#! / bin / sh
+if ["$ ACTION" = ifup];then
+cmd = $ (uci get network. $ INTERFACE.exec_on_up)
+[-n "$ cmd"] && $ cmd
+fi
+if ["$ ACTION" = ifdown]; then
+cmd = $ (uci get network. $ INTERFACE.exec_on_down)
+[-n "$ cmd"] && $ cmd
+fi
+----------------------------------------------
+
+Vous pouvez maintenant ajouter ce qui suit à la description des interfaces dans la section appropriée:
+--- / etc / config / nework ---
+config interface 'wan'
+        ........
+        option exec_on_up '/etc/init.d/redsocks start'
+--------------------------
+redémarrer. Nous y retournons, voyons qu'il y a des chaussettes rouges, il y a ssh, encore une fois, nous vérifions curl -4 https://rutracker.org.
+Nous essayons d'accéder à https://rutracker.org à partir d'un ordinateur du réseau local.
